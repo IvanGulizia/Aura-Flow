@@ -1,0 +1,7 @@
+{
+  "name": "Aura Flow - Generative Canvas",
+  "description": "An experimental, aesthetic drawing application where vector strokes come alive. Features reactive physics, audio visualization, and AI-generated behavior themes.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
