@@ -82,7 +82,7 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
                 <option value="time-step">Time (Step)</option>
               </optgroup>
               <optgroup label="Geometry">
-                <option value="path">Path Start -> End</option>
+                <option value="path">Path Start &rarr; End</option>
                 <option value="path-mirror">Path Center (0-1-0)</option>
                 <option value="path-mirror-inv">Path Edges (1-0-1)</option>
               </optgroup>
