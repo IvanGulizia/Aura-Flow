@@ -298,3 +298,9 @@ export interface UITheme {
   fontFamily: string;
   borderRadius: string; // "50%" for round, "0px" for square
 }
+
+export interface Preset {
+  name: string;
+  description: string;
+  params: SimulationParams;
+}

@@ -1,7 +1,8 @@
-
 import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { Stroke, SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, GlobalToolConfig, EasingMode, GridConfig, SymmetryConfig, Point, Connection, PointReference, ProjectData } from '../types';
 import { audioManager } from '../services/audioService';
+import { getShiftedColor, interpolateColors } from '../utils/colorUtils';
+import { cubicBezier, warpOffset, getPseudoRandom, applyEasing } from '../utils/mathUtils';
 
 interface CanvasProps {
   brushParams: SimulationParams;
@@ -31,125 +32,6 @@ export interface CanvasHandle {
   exportData: () => ProjectData;
   importData: (data: ProjectData | Stroke[]) => void; // Handle legacy array format
 }
-
-// --- COLOR UTILS ---
-const hexToHsl = (hex: string): { h: number, s: number, l: number } => {
-  let r = 0, g = 0, b = 0;
-  if (hex.length === 4) {
-    r = parseInt("0x" + hex[1] + hex[1]);
-    g = parseInt("0x" + hex[2] + hex[2]);
-    b = parseInt("0x" + hex[3] + hex[3]);
-  } else if (hex.length === 7) {
-    r = parseInt("0x" + hex[1] + hex[2]);
-    g = parseInt("0x" + hex[3] + hex[4]);
-    b = parseInt("0x" + hex[5] + hex[6]);
-  }
-  r /= 255; g /= 255; b /= 255;
-  const cmin = Math.min(r,g,b), cmax = Math.max(r,g,b), delta = cmax - cmin;
-  let h = 0, s = 0, l = 0;
-
-  if (delta === 0) h = 0;
-  else if (cmax === r) h = ((g - b) / delta) % 6;
-  else if (cmax === g) h = (b - r) / delta + 2;
-  else h = (r - g) / delta + 4;
-
-  h = Math.round(h * 60);
-  if (h < 0) h += 360;
-
-  l = (cmax + cmin) / 2;
-  s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
-  s = +(s * 100).toFixed(1);
-  l = +(l * 100).toFixed(1);
-
-  return { h, s, l };
-};
-
-const getShiftedColor = (hex: string, shift: number): string => {
-    if (shift === 0) return hex;
-    const hsl = hexToHsl(hex);
-    const newH = (hsl.h + shift) % 360;
-    return `hsl(${newH}, ${hsl.s}%, ${hsl.l}%)`;
-};
-
-// Multi-color interpolation
-const interpolateColors = (colors: string[], t: number): string => {
-    if (colors.length === 0) return '#000000';
-    if (colors.length === 1) return colors[0];
-    if (t <= 0) return colors[0];
-    if (t >= 1) return colors[colors.length - 1];
-
-    const scaledT = t * (colors.length - 1);
-    const index = Math.floor(scaledT);
-    const innerT = scaledT - index;
-    
-    return getGradientMiddleColor(colors[index], colors[index + 1], innerT);
-};
-
-// Returns color mixed in RGB space
-const getGradientMiddleColor = (c1: string, c2: string, ratio: number = 0.5) => {
-    const parse = (c: string) => {
-        if (c.startsWith('rgb')) {
-            const matches = c.match(/\d+/g);
-            if (matches) return [parseInt(matches[0]), parseInt(matches[1]), parseInt(matches[2])];
-        }
-        if (c.length === 4) c = '#' + c[1] + c[1] + c[2] + c[2] + c[3] + c[3];
-        const r = parseInt(c.slice(1, 3), 16);
-        const g = parseInt(c.slice(3, 5), 16);
-        const b = parseInt(c.slice(5, 7), 16);
-        return [r, g, b];
-    };
-    
-    let [r1, g1, b1] = [0,0,0];
-    let [r2, g2, b2] = [255,255,255];
-    
-    try { 
-        [r1, g1, b1] = parse(c1);
-        [r2, g2, b2] = parse(c2);
-    } catch(e) {}
-
-    const r = Math.round(r1 + (r2 - r1) * ratio);
-    const g = Math.round(g1 + (g2 - g1) * ratio);
-    const b = Math.round(b1 + (b2 - b1) * ratio);
-    
-    return `rgb(${r}, ${g}, ${b})`;
-};
-
-// Cubic Bezier function solver
-const cubicBezier = (t: number, p1x: number, p1y: number, p2x: number, p2y: number, p0y: number = 0, p3y: number = 1): number => {
-    const cx = 3 * p1x;
-    const bx = 3 * (p2x - p1x) - cx;
-    const ax = 1 - cx - bx;
-    
-    const sampleCurveX = (T: number) => ((ax * T + bx) * T + cx) * T;
-    const sampleCurveDerivativeX = (T: number) => (3 * ax * T + 2 * bx) * T + cx;
-
-    let T = t; 
-    for (let i = 0; i < 8; i++) {
-        const x2 = sampleCurveX(T) - t;
-        if (Math.abs(x2) < 1e-6) break;
-        const d2 = sampleCurveDerivativeX(T);
-        if (Math.abs(d2) < 1e-6) break;
-        T = T - x2 / d2;
-    }
-    
-    T = Math.max(0, Math.min(1, T));
-
-    const mt = 1 - T;
-    const mt2 = mt * mt;
-    const mt3 = mt2 * mt;
-    const T2 = T * T;
-    const T3 = T2 * T;
-
-    return (mt3 * p0y) + (3 * mt2 * T * p1y) + (3 * mt * T2 * p2y) + (T3 * p3y);
-};
-
-// Helper for warping stop offsets based on a midpoint
-const warpOffset = (t: number, midpoint: number): number => {
-  if (Math.abs(midpoint - 0.5) < 0.001) return t;
-  // Map t so that 0.5 becomes midpoint using a power function
-  const exponent = Math.log(0.5) / Math.log(Math.max(0.01, Math.min(0.99, midpoint)));
-  return Math.pow(t, exponent);
-};
 
 export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ 
   brushParams,
@@ -182,7 +64,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const activeStrokesRef = useRef<Stroke[]>([]); 
 
   const timeRef = useRef<number>(0);
-  const reqRef = useRef<number>();
+  const reqRef = useRef<number | null>(null);
   
   const pointerRef = useRef({ 
       x: -1000, y: -1000, 
@@ -614,35 +496,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   // --- MODULATION LOGIC ---
-  const getPseudoRandom = (seed: number, salt: string) => {
-    let h = 0x811c9dc5;
-    for(let i = 0; i < salt.length; i++) {
-        h ^= salt.charCodeAt(i);
-        h = Math.imul(h, 0x01000193);
-    }
-    h ^= Math.floor(seed * 1000000);
-    h = Math.imul(h, 0x01000193);
-    return ((h >>> 0) / 4294967296);
-  };
-
-  const applyEasing = (t: number, mode?: EasingMode, config?: ModulationConfig) => {
-     if (!mode || mode === 'linear') return t;
-     if (mode === 'easeInQuad') return t * t;
-     if (mode === 'easeOutQuad') return t * (2 - t);
-     if (mode === 'easeInOutQuad') return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-     if (mode === 'step') return t < 0.5 ? 0 : 1;
-     if (mode === 'triangle') return 1 - Math.abs((t - 0.5) * 2); 
-     if (mode === 'triangle-inv') return Math.abs((t - 0.5) * 2); 
-     if (mode === 'sine') return (Math.sin(t * Math.PI * 2 - Math.PI/2) + 1) / 2;
-     if (mode === 'random') return Math.random(); 
-     
-     if (mode === 'custom-bezier' && config) {
-         return cubicBezier(t, config.paramA ?? 0.5, config.paramB ?? 0.5, config.paramC ?? 0.5, config.paramD ?? 0.5, config.paramE ?? 0, config.paramF ?? 1);
-     }
-     
-     return t;
-  };
-
   const resolveParam = (
     baseValue: number, 
     key: keyof SimulationParams, 
