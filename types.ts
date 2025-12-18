@@ -10,10 +10,40 @@ export interface Point {
 }
 
 export type BlendMode = 'source-over' | 'lighter' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'exclusion';
+export type LineCapMode = 'butt' | 'round' | 'square';
 
-export type ModulationSource = 'none' | 'random' | 'velocity' | 'cursor' | 'pressure' | 'path' | 'path-mirror' | 'path-mirror-inv' | 'audio-live' | 'audio-sample';
+export type ModulationSource = 
+  | 'none' 
+  | 'random' 
+  | 'index' // Based on stroke index
+  | 'time' // Linear loop 0 -> 1 based on time
+  | 'time-sine' // Legacy: Automatic sine wave
+  | 'time-pulse' // NEW: Hold at peaks
+  | 'time-step'  // NEW: Discrete jumps
+  | 'velocity' 
+  | 'pressure' 
+  | 'cursor' 
+  | 'path' 
+  | 'path-mirror' 
+  | 'path-mirror-inv' 
+  | 'audio-live' 
+  | 'audio-sample';
 
-export type GlobalForceType = 'none' | 'repulse' | 'attract' | 'vortex';
+export type EasingMode = 
+  | 'linear' 
+  | 'easeInQuad' 
+  | 'easeOutQuad' 
+  | 'easeInOutQuad' 
+  | 'step' 
+  | 'triangle'      // 0 -> 1 -> 0 (Linear)
+  | 'triangle-inv'  // 1 -> 0 -> 1 (Linear)
+  | 'sine'          // 0 -> 1 -> 0 (Smooth/Curved)
+  | 'random'       // Noise
+  | 'custom-bezier'; // NEW: Cubic Bezier (x1, y1, x2, y2)
+
+export type ModulationScope = 'stroke' | 'point';
+
+export type GlobalForceType = 'none' | 'repulse' | 'attract' | 'vortex' | 'connect';
 
 export type GlobalToolTrigger = 'click' | 'hover';
 
@@ -21,21 +51,120 @@ export interface GlobalToolConfig {
   trigger: GlobalToolTrigger;
   radius: number;
   force: number;
+  falloff: number; // 0 to 1 (Soft to Sharp)
+  // LINK TOOL CONFIGS
+  connectionStiffness: number; 
+  connectionBreakingForce: number; // 0 = Unbreakable, >0 = Threshold to break
+  connectionBias: number; // 0 = A pulls B, 0.5 = Equal, 1 = B pulls A
+  connectionInfluence: number; // Number of adjacent points affected (0 = none)
+  connectionFalloff: number; // 0 = Constant propagation, 1 = Linear decay
+  connectionDecayEasing: EasingMode; // NEW: Curve for propagation decay
+  connectionsVisible: boolean;
 }
 
 export interface ModulationConfig {
   source: ModulationSource;
+  scope: ModulationScope; // Apply per stroke or per point
   min: number;
   max: number;
+  speed?: number; // Speed multiplier for time-based modulation
+  easing?: EasingMode;
+  
+  // NEW: Input Control
+  inputMin?: number; // 0 to 1. Default 0.
+  inputMax?: number; // 0 to 1. Default 1.
+  invertDirection?: boolean; // NEW: Invert time flow
+
+  // NEW: Generic Params for Curves (Bezier) or Time (Pause/Duration)
+  paramA?: number; // Control Point 1 X
+  paramB?: number; // Control Point 1 Y
+  paramC?: number; // Control Point 2 X
+  paramD?: number; // Control Point 2 Y
+  paramE?: number; // Start Value Y (0 to 1)
+  paramF?: number; // End Value Y (0 to 1)
 }
 
+// --- CONNECTIONS ---
+export interface PointReference {
+  strokeId: string;
+  pointIndex: number;
+}
+
+export interface Connection {
+  id: string;
+  from: PointReference;
+  to: PointReference;
+  stiffness: number; 
+  length: number;    
+  breakingForce: number; // Persisted per connection
+  bias: number; // Persisted per connection
+  influence: number; // Persisted propagation radius
+  falloff: number; // Persisted decay factor
+  decayEasing: EasingMode; // NEW: Persisted decay curve
+}
+
+// --- GUIDES & SYMMETRY ---
+
+export interface GridConfig {
+  enabled: boolean;
+  size: number;      // Grid cell size
+  snap: boolean;     // Snap drawing to grid
+  visible: boolean;  // Show grid lines
+  color: string;
+  opacity: number;
+}
+
+export interface SymmetryConfig {
+  enabled: boolean;
+  type: 'horizontal' | 'vertical' | 'quad' | 'radial';
+  count: number;     // For radial (min 2)
+  visible: boolean;  // Show symmetry lines
+}
+
+// --- FILL & GRADIENT CONFIG ---
+
+export interface GradientConfig {
+  enabled: boolean;
+  colors: string[]; // Supports multiple colors now
+}
+
+export interface FillConfig {
+  enabled: boolean;
+  type: 'solid' | 'gradient'; 
+  syncWithStroke: boolean; // NEW: Inherit properties from stroke
+  gradient: GradientConfig;   
+  blendMode: BlendMode;       
+  colorSource: 'stroke' | 'custom'; 
+  customColor: string;
+  opacity: number;
+  blur: number; // Independent Blur
+  glow: boolean; // NEW: Apply glow to fill
+  rule: 'nonzero' | 'evenodd'; 
+}
+
+// --- NEW AUDIO TYPES ---
+
+export type SoundVolumeSource = 'manual' | 'velocity' | 'displacement-dist' | 'displacement-x' | 'displacement-y' | 'proximity';
+export type SoundPlaybackMode = 'loop' | 'timeline-scrub'; 
+
 export interface SoundConfig {
+  enabled: boolean;
   bufferId: string | null; 
-  baseVolume: number;
-  pitch: number;
+  
+  // How is the sound played?
+  playbackMode: SoundPlaybackMode; // Continuous Loop or Timeline Scrub
+  
+  // What drives the volume?
+  volumeSource: SoundVolumeSource; 
+  
+  // Base Settings
+  minVolume: number;
+  maxVolume: number;
+  minPitch: number;
+  maxPitch: number;
+  
   reverbSend: number; // 0 to 1
-  loop: boolean;
-  motionSensitivity: number; // 0 to 10: How much physics velocity affects volume/pitch
+  grainSize: number; // For Granular Timeline (0.01 to 0.2s)
 }
 
 export interface SimulationParams {
@@ -44,9 +173,28 @@ export interface SimulationParams {
   opacity: number;
   color: string;
   blendMode: BlendMode;
+  lineCap: LineCapMode; // NEW: Round, Butt, Square
   glowStrength: number;
   blurStrength: number;
   seamlessPath: boolean;
+  pathRounding: number; // 0 to 1. Used when seamlessPath is false (e.g. Grid Mode). Now Modulatable.
+  drawPoints: boolean; // Explicitly draw points as circles
+  smoothModulation: boolean; // NEW: Smooth gradients between segments
+  
+  // --- PATH CLOSING ---
+  closePath: boolean; // NEW: Connect last point to first
+  closePathRadius: number; // NEW: Snap distance to close loop
+
+  // --- COLOR MODULATION ---
+  hueShift: number; // 0 to 360. Added to base color Hue. Modulatable.
+
+  // --- STYLING ---
+  fill: FillConfig;
+  gradient: GradientConfig; // Stroke Gradient Colors
+  strokeGradientType: 'linear' | 'path'; // NEW: Directional vs Path-following
+  strokeGradientAngle: number; // Modulatable Angle
+  strokeGradientMidpoint: number; // 0 to 1 (0.5 default)
+  fillGradientAngle: number;   // Modulatable Angle
   
   // --- SHAPE & DRAWING ---
   segmentation: number; // Distance between points
@@ -58,6 +206,7 @@ export interface SimulationParams {
   viscosity: number; // Drag
   elasticity: number; // Return to shape
   tension: number; // Internal jitter/stiffness
+  maxDisplacement: number; // NEW: Physics limiter (0 = infinite)
   gravityX: number;
   gravityY: number;
 
@@ -74,6 +223,7 @@ export interface SimulationParams {
   attractionForce: number; // Pull
   alignmentForce: number; // Match velocity (Boids)
   cohesionForce: number; // Stay together (Boids)
+  swarmCursorInfluence: number; // NEW: 0 = Always active, 1 = Only near cursor
   
   // --- INTERACTION (Mouse) ---
   mouseInfluenceRadius: number;
@@ -94,12 +244,57 @@ export interface SimulationParams {
 
 export interface Stroke {
   id: string;
+  index: number; // Order in the stack
   points: Point[];
   center: { x: number, y: number };
+  originCenter: { x: number, y: number }; // Initial center position for displacement calculations
   velocity: { x: number, y: number }; // Average velocity of the stroke
   params: SimulationParams;
   sound: SoundConfig;
   createdAt: number;
   phaseOffset: number;
   randomSeed: number; // Stable random value (0-1) for 'random' modulation
+}
+
+// --- PROJECT FILE STRUCTURE (Updated for Connections) ---
+export interface ProjectData {
+  strokes: Stroke[];
+  connections: Connection[];
+  version: number;
+}
+
+// --- UI THEME SYSTEM ---
+export interface UITheme {
+  // Global
+  canvasBg: string; 
+
+  menuBg: string;
+  menuText: string;
+  menuBorderColor: string;
+  menuBorderWidth: number;
+  menuBlur: number;
+  menuOpacity: number;
+  menuShadow: string;
+  
+  // Buttons
+  buttonBg: string;
+  buttonText: string;
+  buttonHoverBg: string;
+  buttonHoverText: string; 
+  buttonActiveBg: string;
+  buttonActiveText: string; 
+  buttonBorderColor: string;
+  
+  // Sections
+  sectionHeaderActiveColor: string;
+  
+  // Separators
+  separatorColor: string;
+  separatorWidth: number;
+  
+  screenBorderColor: string;
+  screenBorderWidth: number;
+  
+  fontFamily: string;
+  borderRadius: string; // "50%" for round, "0px" for square
 }
