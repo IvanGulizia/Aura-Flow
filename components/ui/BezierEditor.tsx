@@ -44,7 +44,11 @@ export const BezierEditor: React.FC<{
 
     const handlePointerUp = (e: React.PointerEvent) => {
         setDragging(null);
-        e.currentTarget.releasePointerCapture(e.pointerId);
+        try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch (err) {
+            // Ignore if pointer capture lost
+        }
     };
 
     return (

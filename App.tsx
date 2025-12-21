@@ -5,11 +5,11 @@ import { DebugMenu } from './components/panels/DebugMenu';
 import { SaveModal } from './components/SaveModal';
 import { SettingsPanel } from './components/panels/SettingsPanel';
 import { Palette } from './components/panels/Palette';
-import { SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, GlobalToolConfig, UITheme, GridConfig, SymmetryConfig, Preset } from './types';
+import { SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, GlobalToolConfig, UITheme, GridConfig, SymmetryConfig, Preset, Connection } from './types';
 import { audioManager } from './services/audioService';
 import { hexToRgba } from './utils/colorUtils';
 import { DEFAULT_PARAMS, DEFAULT_SOUND, DEFAULT_GLOBAL_TOOL, DEFAULT_GRID, DEFAULT_SYMMETRY, DEFAULT_THEME, PARAMS_GROUPS, PARAM_RANGES, DEFAULT_PRESETS, DEFAULT_PALETTE, BLEND_MODES } from './constants/defaults';
-import { Play, Pause, Mic, MicOff, Trash2, Settings, Undo, Redo, PenTool, MousePointer2, Volume2, VolumeX, Speaker, Loader2 } from 'lucide-react';
+import { Play, Pause, Mic, MicOff, Trash2, Settings, Undo, Redo, PenTool, MousePointer2, Volume2, VolumeX, Speaker, Loader2, Link as LinkIcon, Shuffle } from 'lucide-react';
 
 const FloatingTooltip = ({ text, rect }: { text: string, rect: DOMRect }) => {
   const style: React.CSSProperties = {
@@ -52,9 +52,14 @@ export default function App() {
   const [gridConfig, setGridConfig] = useState<GridConfig>(DEFAULT_GRID);
   const [symmetryConfig, setSymmetryConfig] = useState<SymmetryConfig>(DEFAULT_SYMMETRY);
 
-  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
+  const [selectedStrokeIds, setSelectedStrokeIds] = useState<Set<string>>(new Set());
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null); // Leader of selection for UI display
   const [selectedStrokeParams, setSelectedStrokeParams] = useState<SimulationParams | null>(null);
   const [selectedStrokeSound, setSelectedStrokeSound] = useState<SoundConfig | null>(null);
+  
+  const [selectedConnectionIds, setSelectedConnectionIds] = useState<Set<string>>(new Set());
+  const [selectedConnectionParams, setSelectedConnectionParams] = useState<Connection | null>(null);
+
   const [lockedParams, setLockedParams] = useState<Set<string>>(new Set());
 
   const [isPlaying, setIsPlaying] = useState(true);
@@ -63,6 +68,7 @@ export default function App() {
   const [ecoMode, setEcoMode] = useState(true); 
   
   const [interactionMode, setInteractionMode] = useState<'draw' | 'select'>('draw');
+  const [selectionFilter, setSelectionFilter] = useState<'all' | 'links'>('all'); // NEW: Filter for link selection
   const [globalForceTool, setGlobalForceTool] = useState<GlobalForceType>('none');
   const [globalToolConfig, setGlobalToolConfig] = useState<GlobalToolConfig>(DEFAULT_GLOBAL_TOOL);
 
@@ -121,16 +127,54 @@ export default function App() {
     localStorage.setItem('aura-flow-presets', JSON.stringify(presets));
   }, [presets]);
 
+  const cyclePreset = (dir: 1 | -1) => {
+      const currentIdx = presets.findIndex(p => p.name === activePresetName);
+      if (currentIdx === -1 && presets.length > 0) {
+          loadPreset(presets[0].params, presets[0].name);
+          return;
+      }
+      let nextIdx = (currentIdx + dir) % presets.length;
+      if (nextIdx < 0) nextIdx = presets.length - 1;
+      const nextPreset = presets[nextIdx];
+      loadPreset(nextPreset.params, nextPreset.name);
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Allow typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
       if (e.code === 'Space') { e.preventDefault(); setIsPlaying(p => !p); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); setUndoTrigger(t => t + 1); }
       if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y')) { e.preventDefault(); setRedoTrigger(t => t + 1); }
       if (e.key.toLowerCase() === 'h' && !embedMode) { setShowDebug(prev => !prev); }
+      
+      // NEW SHORTCUTS
+      if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) { setResetPosTrigger(t => t + 1); } // R - Reset
+      
+      if (e.key.toLowerCase() === 'e') {
+          if (e.shiftKey) {
+              e.preventDefault(); 
+              initiateSave(); // Shift+E - Export
+          } else {
+              cyclePreset(1); // E - Next Preset
+          }
+      }
+      
+      if (e.key.toLowerCase() === 'q' && !e.ctrlKey) { cyclePreset(-1); } // Q - Prev Preset
+      if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.shiftKey) { triggerImportProject(); } // I - Import
+      if (e.key.toLowerCase() === 'f' && !e.ctrlKey) { randomizeSection('visuals'); } // F - Randomize (Used Visuals as simple random example, or implement full random)
+
+      // Delete key
+      if (e.key === 'Delete' && !embedMode) {
+          if (selectedStrokeId || selectedStrokeIds.size > 0 || selectedConnectionIds.size > 0) {
+              setDeleteSelectedTrigger(t => t + 1);
+          }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [embedMode]);
+  }, [embedMode, selectedStrokeId, selectedStrokeIds, selectedConnectionIds, presets, activePresetName]);
 
   const toggleLock = (key: string) => setLockedParams(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
 
@@ -145,17 +189,36 @@ export default function App() {
   };
 
   const updateParam = (key: keyof SimulationParams, value: any) => {
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams({ ...selectedStrokeParams, [key]: value });
-    else setBrushParams({ ...brushParams, [key]: value });
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams({ ...selectedStrokeParams, [key]: value });
+        // Use imperative handle for selective update
+        canvasRef.current?.updateSelectedParams({ key, value });
+    } else {
+        setBrushParams({ ...brushParams, [key]: value });
+    }
     setActivePresetName(null);
+  };
+
+  // Specific for connections
+  const updateConnectionParam = (key: keyof Connection, value: any) => {
+      if (selectedConnectionParams) {
+          setSelectedConnectionParams({ ...selectedConnectionParams, [key]: value });
+          // Partial connection update
+          canvasRef.current?.updateSelectedConnectionParams({ [key]: value });
+      }
   };
 
   const resetParam = (key: keyof SimulationParams) => {
       const defaultValue = (DEFAULT_PARAMS as any)[key];
-      if (selectedStrokeId && selectedStrokeParams) {
+      if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
           const newMods = { ...selectedStrokeParams.modulations };
           delete newMods[key];
+          
           setSelectedStrokeParams({ ...selectedStrokeParams, [key]: defaultValue, modulations: newMods });
+          
+          // CRITICAL FIX: Explicitly remove modulation from Canvas state
+          canvasRef.current?.updateSelectedParams({ key, value: undefined, modulation: true }); // Clear Modulation
+          canvasRef.current?.updateSelectedParams({ key, value: defaultValue }); // Reset Value
       } else {
           const newMods = { ...brushParams.modulations };
           delete newMods[key];
@@ -172,61 +235,86 @@ export default function App() {
   };
 
   const updateFill = (updates: Partial<SimulationParams['fill']>) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newFill = { ...target.fill, ...updates };
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
-    else setBrushParams({ ...brushParams, fill: newFill });
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
+        // Partial deep update for fill
+        canvasRef.current?.updateSelectedParams({ fill: newFill });
+    } else {
+        setBrushParams({ ...brushParams, fill: newFill });
+    }
     setActivePresetName(null);
   };
 
   const updateFillGradient = (updates: Partial<SimulationParams['fill']['gradient']>) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newGrad = { ...target.fill.gradient, ...updates };
     const newFill = { ...target.fill, gradient: newGrad };
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
-    else setBrushParams({ ...brushParams, fill: newFill });
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
+        canvasRef.current?.updateSelectedParams({ fill: newFill });
+    } else {
+        setBrushParams({ ...brushParams, fill: newFill });
+    }
     setActivePresetName(null);
   };
 
   const updateGradient = (updates: Partial<SimulationParams['gradient']>) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newGrad = { ...target.gradient, ...updates };
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams({ ...selectedStrokeParams, gradient: newGrad });
-    else setBrushParams({ ...brushParams, gradient: newGrad });
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams({ ...selectedStrokeParams, gradient: newGrad });
+        canvasRef.current?.updateSelectedParams({ gradient: newGrad });
+    } else {
+        setBrushParams({ ...brushParams, gradient: newGrad });
+    }
     setActivePresetName(null);
   };
 
   const addGradientColor = () => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newColors = [...target.gradient.colors, '#ffffff'];
     updateGradient({ colors: newColors });
   };
 
   const removeGradientColor = (index: number) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     if (target.gradient.colors.length <= 2) return;
     const newColors = target.gradient.colors.filter((_, i) => i !== index);
     updateGradient({ colors: newColors });
   };
 
   const updateGradientColor = (index: number, color: string) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newColors = [...target.gradient.colors];
     newColors[index] = color;
     updateGradient({ colors: newColors });
   };
 
   const updateSound = (key: keyof SoundConfig, value: any) => {
-    if (selectedStrokeId && selectedStrokeSound) setSelectedStrokeSound({ ...selectedStrokeSound, [key]: value });
-    else setBrushSound({ ...brushSound, [key]: value });
+    if (selectedStrokeIds.size > 0 && selectedStrokeSound) {
+        setSelectedStrokeSound({ ...selectedStrokeSound, [key]: value });
+    } else {
+        setBrushSound({ ...brushSound, [key]: value });
+    }
   };
 
   const updateModulation = (key: keyof SimulationParams, config: ModulationConfig | undefined) => {
-    const target = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newMods = { ...target.modulations };
     if (config === undefined) delete newMods[key]; else newMods[key] = config;
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams({ ...selectedStrokeParams, modulations: newMods });
-    else setBrushParams({ ...brushParams, modulations: newMods });
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams({ ...selectedStrokeParams, modulations: newMods });
+        // Send explicit removal if undefined, handled in Canvas
+        canvasRef.current?.updateSelectedParams({ key, value: config, modulation: true });
+    } else {
+        setBrushParams({ ...brushParams, modulations: newMods });
+    }
     setActivePresetName(null);
   };
 
@@ -234,8 +322,16 @@ export default function App() {
     const keys = PARAMS_GROUPS[section];
     const newValues: any = {};
     keys.forEach(k => { newValues[k] = (DEFAULT_PARAMS as any)[k]; });
-    if (selectedStrokeId && selectedStrokeParams) { const updated = { ...selectedStrokeParams }; for (const k in newValues) { (updated as any)[k] = newValues[k]; } setSelectedStrokeParams(updated); }
-    else setBrushParams(prev => ({ ...prev, ...newValues }));
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) { 
+        const updated = { ...selectedStrokeParams }; 
+        for (const k in newValues) { (updated as any)[k] = newValues[k]; } 
+        setSelectedStrokeParams(updated); 
+        // Bulk update for section
+        canvasRef.current?.updateSelectedParams(newValues);
+    } else {
+        setBrushParams(prev => ({ ...prev, ...newValues }));
+    }
     setActivePresetName(null);
   };
 
@@ -250,15 +346,81 @@ export default function App() {
       else if (k.startsWith('audioTo')) newValues[k] = Math.random() > 0.5;
       else { const range = PARAM_RANGES[k]; if (range) newValues[k] = range.min + Math.random() * (range.max - range.min); else newValues[k] = Math.random(); }
     });
-    if (selectedStrokeId && selectedStrokeParams) setSelectedStrokeParams(prev => prev ? ({ ...prev, ...newValues }) : null);
-    else setBrushParams(prev => ({ ...prev, ...newValues }));
+    
+    if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
+        setSelectedStrokeParams(prev => prev ? ({ ...prev, ...newValues }) : null);
+        canvasRef.current?.updateSelectedParams(newValues);
+    } else {
+        setBrushParams(prev => ({ ...prev, ...newValues }));
+    }
     setActivePresetName(null);
   };
 
-  const handleStrokeSelect = useCallback((id: string | null, params: SimulationParams | null, sound: SoundConfig | null) => {
+  const syncSelected = () => {
+      if (selectedStrokeParams) {
+          canvasRef.current?.syncSelectedParams(selectedStrokeParams);
+      }
+  };
+
+  // General selection handler
+  const handleSelection = useCallback((
+      strokeIds: string[] | string | null, 
+      strokeParams: SimulationParams | null, 
+      strokeSound: SoundConfig | null,
+      connectionIds: string[] | string | null,
+      connectionParams: Connection | null
+  ) => {
     if (embedMode) return;
-    setSelectedStrokeId(id); setSelectedStrokeParams(params); setSelectedStrokeSound(sound);
-    if (id) setShowSettings(true);
+    
+    // 1. Handle Strokes
+    if (Array.isArray(strokeIds)) {
+       setSelectedStrokeIds(new Set(strokeIds));
+       if (strokeIds.length > 0) {
+           // We expect the last ID in the array to be the "leader" or most recently selected
+           setSelectedStrokeId(strokeIds[strokeIds.length - 1]);
+           setSelectedStrokeParams(strokeParams);
+           setSelectedStrokeSound(strokeSound);
+       } else {
+           setSelectedStrokeId(null);
+           setSelectedStrokeParams(null);
+           setSelectedStrokeSound(null);
+       }
+    } else if (strokeIds === null) {
+       setSelectedStrokeIds(new Set());
+       setSelectedStrokeId(null);
+       setSelectedStrokeParams(null);
+       setSelectedStrokeSound(null);
+    } else {
+       setSelectedStrokeIds(new Set([strokeIds]));
+       setSelectedStrokeId(strokeIds);
+       setSelectedStrokeParams(strokeParams);
+       setSelectedStrokeSound(strokeSound);
+    }
+
+    // 2. Handle Connections
+    if (Array.isArray(connectionIds)) {
+        setSelectedConnectionIds(new Set(connectionIds));
+        if (connectionIds.length > 0) {
+            setSelectedConnectionParams(connectionParams);
+        } else {
+            setSelectedConnectionParams(null);
+        }
+    } else if (connectionIds === null) {
+        setSelectedConnectionIds(new Set());
+        setSelectedConnectionParams(null);
+    } else {
+        setSelectedConnectionIds(new Set([connectionIds]));
+        setSelectedConnectionParams(connectionParams);
+    }
+
+    // 3. Show settings if anything is selected
+    const hasSelection = (Array.isArray(strokeIds) ? strokeIds.length > 0 : !!strokeIds) || 
+                         (Array.isArray(connectionIds) ? connectionIds.length > 0 : !!connectionIds);
+    
+    if (hasSelection) {
+        setShowSettings(true);
+    }
+
   }, [embedMode]);
 
   const initiateSave = () => { if (canvasRef.current) setShowSaveModal(true); };
@@ -284,7 +446,13 @@ export default function App() {
   const deletePreset = (index: number) => { if (confirm("Delete this preset?")) setPresets(prev => prev.filter((_, i) => i !== index)); };
   
   const loadPreset = (params: SimulationParams, name: string) => { 
-      if (selectedStrokeId) setSelectedStrokeParams({ ...params }); else setBrushParams({ ...params }); 
+      if (selectedStrokeIds.size > 0) {
+          setSelectedStrokeParams({ ...params }); 
+          // Full update for preset load on selection
+          canvasRef.current?.syncSelectedParams(params);
+      } else { 
+          setBrushParams({ ...params }); 
+      }
       setActivePresetName(name);
   };
   
@@ -298,6 +466,21 @@ export default function App() {
     } catch (err) {}
   };
 
+  // New function to export the currently active settings as a single preset
+  const exportSinglePreset = () => {
+      try {
+          const current = selectedStrokeId && selectedStrokeParams ? selectedStrokeParams : brushParams;
+          const name = activePresetName || "custom-preset";
+          const singlePreset = { name, description: "Exported single preset", params: current };
+          const json = JSON.stringify([singlePreset], null, 2); // Wrap in array for compatibility
+          const blob = new Blob([json], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${name.toLowerCase().replace(/\s+/g, '-')}.json`; 
+          document.body.appendChild(a);
+          setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+      } catch (err) { console.error(err); }
+  };
+
   const triggerImportPresets = () => presetFileInputRef.current?.click();
   const handleImportPresets = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const data = JSON.parse(ev.target?.result as string); if (Array.isArray(data)) setPresets(prev => [...prev, ...data]); } catch (err) {} }; reader.readAsText(file); e.target.value = ''; };
 
@@ -307,7 +490,7 @@ export default function App() {
 
   const setForceTool = (tool: GlobalForceType) => { if (tool !== 'none') { setInteractionMode('draw'); } setGlobalForceTool(tool); };
 
-  const currentParams = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+  const currentParams = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
 
   const themeStyles = {
     '--menu-bg': hexToRgba(uiTheme.menuBg, uiTheme.menuOpacity), 
@@ -363,15 +546,19 @@ export default function App() {
         gridConfig={gridConfig}
         symmetryConfig={symmetryConfig}
         selectedStrokeId={selectedStrokeId}
+        selectedStrokeIds={selectedStrokeIds}
         selectedStrokeParams={selectedStrokeParams}
+        selectedConnectionIds={selectedConnectionIds}
+        selectedConnectionParams={selectedConnectionParams}
         isPlaying={isPlaying}
         isSoundEngineEnabled={isSoundEngineEnabled}
         isMicEnabled={isMicEnabled}
         interactionMode={interactionMode}
+        selectionFilter={selectionFilter} // PASS FILTER
         globalForceTool={globalForceTool}
         globalToolConfig={globalToolConfig}
         ecoMode={ecoMode}
-        onStrokeSelect={handleStrokeSelect}
+        onStrokeSelect={handleSelection}
         clearTrigger={clearTrigger}
         deleteSelectedTrigger={deleteSelectedTrigger}
         undoTrigger={undoTrigger}
@@ -406,14 +593,28 @@ export default function App() {
               }}
             >
               <IconButton icon={<PenTool size={18} />} onClick={() => { setInteractionMode('draw'); setGlobalForceTool('none'); }} active={interactionMode === 'draw' && globalForceTool === 'none'} label="Draw" />
-              <IconButton icon={<MousePointer2 size={18} />} onClick={() => { setInteractionMode('select'); setGlobalForceTool('none'); }} active={interactionMode === 'select' && globalForceTool === 'none'} label="Select" />
+              <div className="relative flex items-center">
+                  <IconButton icon={<MousePointer2 size={18} />} onClick={() => { setInteractionMode('select'); setGlobalForceTool('none'); }} active={interactionMode === 'select' && globalForceTool === 'none'} label="Select" />
+                  
+                  {/* LINK FILTER TOGGLE (Only in Select Mode) */}
+                  {interactionMode === 'select' && globalForceTool === 'none' && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setSelectionFilter(f => f === 'all' ? 'links' : 'all'); }}
+                        className={`absolute -bottom-6 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full flex items-center justify-center border transition-all text-[8px] z-50 ${selectionFilter === 'links' ? 'bg-indigo-600 text-white border-indigo-700 shadow' : 'bg-white text-slate-400 border-slate-200 hover:text-indigo-500'}`}
+                        title={selectionFilter === 'links' ? "Select: Links Only" : "Select: All Objects"}
+                      >
+                          <LinkIcon size={12} />
+                      </button>
+                  )}
+              </div>
+              
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0" />
               <div className="relative shrink-0">
                 <button onClick={() => setShowPalette(!showPalette)} className="w-10 h-10 rounded-full border border-slate-200 shadow-sm flex items-center justify-center transition-transform hover:scale-105 active:scale-95" style={{ backgroundColor: currentParams.color }}>
                     <div className="w-full h-full rounded-full ring-1 ring-inset ring-black/5" />
                 </button>
               </div>
-              <IconButton icon={<Settings size={20} />} onClick={() => setShowSettings(!showSettings)} active={showSettings} label="Settings" className={selectedStrokeId ? "ring-2 ring-indigo-500/50" : ""} />
+              <IconButton icon={<Settings size={20} />} onClick={() => setShowSettings(!showSettings)} active={showSettings} label="Settings" className={selectedStrokeId || selectedConnectionIds.size > 0 ? "ring-2 ring-indigo-500/50" : ""} />
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0" />
               <IconButton icon={isMicEnabled ? <Mic size={18} className="text-red-500 animate-pulse" /> : <MicOff size={18} />} onClick={toggleMic} active={isMicEnabled} label="Mic Reactivity" />
               <IconButton icon={isPlaying ? <Pause size={18} /> : <Play size={18} />} onClick={() => setIsPlaying(!isPlaying)} active={isPlaying} label={isPlaying ? "Pause" : "Play"} />
@@ -421,7 +622,7 @@ export default function App() {
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0 hidden md:block" />
               <IconButton icon={<Undo size={18} />} onClick={() => setUndoTrigger(t => t + 1)} label="Undo" className="hidden md:flex" />
               <IconButton icon={<Redo size={18} />} onClick={() => setRedoTrigger(t => t + 1)} label="Redo" className="hidden md:flex" />
-              <IconButton icon={<Trash2 size={18} />} onClick={() => { setClearTrigger(c => c + 1); setSelectedStrokeId(null); }} label="Clear" />
+              <IconButton icon={<Trash2 size={18} />} onClick={() => { setClearTrigger(c => c + 1); setSelectedStrokeIds(new Set()); setSelectedStrokeId(null); setSelectedConnectionIds(new Set()); }} label="Clear" />
             </div>
           </div>
 
@@ -442,8 +643,23 @@ export default function App() {
             presets={presets}
             activePresetName={activePresetName}
             lockedParams={lockedParams}
+            
+            selectedConnectionIds={selectedConnectionIds}
+            selectedConnectionParams={selectedConnectionParams}
+            updateConnectionParam={updateConnectionParam}
 
-            setSelectedStrokeId={setSelectedStrokeId}
+            ecoMode={ecoMode}
+            setEcoMode={setEcoMode}
+
+            setSelectedStrokeId={(id) => { 
+                if (id) {
+                    setSelectedStrokeId(id);
+                    setSelectedStrokeIds(new Set([id]));
+                } else {
+                    setSelectedStrokeId(null);
+                    setSelectedStrokeIds(new Set());
+                }
+            }}
             setSelectedStrokeParams={setSelectedStrokeParams}
             updateParam={updateParam}
             resetParam={resetParam}
@@ -475,11 +691,14 @@ export default function App() {
             deletePreset={deletePreset}
             saveNewPreset={saveNewPreset}
             exportPresets={exportPresets}
+            exportSinglePreset={exportSinglePreset}
             triggerImportPresets={triggerImportPresets}
 
             handleSoundUpload={handleSoundUpload}
             handleBufferReady={handleBufferReady}
             removeSound={removeSound}
+            
+            onSyncSelected={syncSelected}
           />
         </>
       )}

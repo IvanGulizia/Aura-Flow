@@ -10,7 +10,7 @@ export const DEFAULT_PARAMS: SimulationParams = {
   hueShift: 0,
   segmentation: 10, smoothing: 0.5,
   mass: 1, friction: 0.9, viscosity: 0.0, elasticity: 0.01, tension: 0, maxDisplacement: 0, gravityX: 0, gravityY: 0,
-  wiggleAmplitude: 0, wiggleFrequency: 0, waveSpeed: 0, breathingAmp: 0, breathingFreq: 0.05,
+  wiggleAmplitude: 0, wiggleFrequency: 0, waveSpeed: 0,
   neighborRadius: 150, repulsionForce: 0, attractionForce: 0, alignmentForce: 0, cohesionForce: 0, swarmCursorInfluence: 0,
   mouseInfluenceRadius: 150, mouseRepulsion: 0, mouseAttraction: 0, mouseFalloff: 1,
   audioSensitivity: 1, audioToWidth: false, audioToColor: false, audioToWiggle: false,
@@ -75,7 +75,7 @@ export const DEFAULT_THEME: UITheme = {
 
 export const PARAMS_GROUPS = {
   physics: ['mass', 'friction', 'viscosity', 'elasticity', 'tension', 'maxDisplacement', 'gravityX', 'gravityY'],
-  shape: ['segmentation', 'smoothing', 'wiggleAmplitude', 'wiggleFrequency', 'waveSpeed', 'breathingAmp', 'breathingFreq', 'closePath', 'closePathRadius'],
+  shape: ['segmentation', 'smoothing', 'wiggleAmplitude', 'wiggleFrequency', 'waveSpeed', 'closePath', 'closePathRadius'],
   social: ['neighborRadius', 'repulsionForce', 'attractionForce', 'alignmentForce', 'cohesionForce', 'mouseInfluenceRadius', 'mouseRepulsion', 'mouseAttraction', 'mouseFalloff', 'swarmCursorInfluence'],
   visuals: ['strokeWidth', 'opacity', 'blendMode', 'lineCap', 'glowStrength', 'blurStrength', 'seamlessPath', 'pathRounding', 'drawPoints', 'smoothModulation', 'hueShift', 'fill', 'gradient', 'strokeGradientType'], 
   audio: ['audioSensitivity', 'audioToWidth', 'audioToColor', 'audioToWiggle']
@@ -87,8 +87,8 @@ export const PARAM_RANGES: Record<string, {min: number, max: number}> = {
   segmentation: {min: 5, max: 20}, wiggleAmplitude: {min: 0, max: 10}, wiggleFrequency: {min: 0.05, max: 0.3}, waveSpeed: {min: 0, max: 0.1},
   neighborRadius: {min: 50, max: 200}, repulsionForce: {min: 0, max: 0.2}, attractionForce: {min: 0, max: 0.2},
   mouseInfluenceRadius: {min: 100, max: 300}, mouseRepulsion: {min: 0, max: 5}, mouseAttraction: {min: 0, max: 5}, mouseFalloff: {min: 1, max: 4},
-  strokeWidth: {min: 0, max: 30}, opacity: {min: 0.5, max: 1}, glowStrength: {min: 0, max: 20}, blurStrength: {min: 0, max: 5},
-  breathingAmp: {min: 0, max: 10}, breathingFreq: {min: 0.01, max: 0.2}, alignmentForce: {min: 0, max: 0.5}, cohesionForce: {min: 0, max: 0.5}, swarmCursorInfluence: { min: 0, max: 1 },
+  strokeWidth: {min: 0, max: 30}, opacity: {min: 0.5, max: 1}, glowStrength: {min: 0, max: 20}, blurStrength: {min: 0, max: 20},
+  alignmentForce: {min: 0, max: 0.5}, cohesionForce: {min: 0, max: 0.5}, swarmCursorInfluence: { min: 0, max: 1 },
   pathRounding: {min: 0, max: 1}, hueShift: { min: 0, max: 360 },
   strokeGradientAngle: {min: 0, max: 360},
   strokeGradientMidpoint: {min: 0, max: 1},
@@ -104,7 +104,7 @@ export const PARAM_DESCRIPTIONS: Record<string, string> = {
   waveSpeed: "Speed of wave travel.", neighborRadius: "Distance for interactions.", repulsionForce: "Pushing strokes apart.",
   attractionForce: "Pulling strokes together.", mouseInfluenceRadius: "Cursor effect size.", mouseRepulsion: "Run from cursor.",
   mouseAttraction: "Pull to cursor.", strokeWidth: "Thickness.", opacity: "Transparency.", blendMode: "Mixing mode.",
-  breathingAmp: "Pulsing width size.", breathingFreq: "Pulsing speed.", alignmentForce: "Match direction.", cohesionForce: "Stay together.",
+  alignmentForce: "Match direction.", cohesionForce: "Stay together.",
   hueShift: "Shifts the color hue. Use modulation (random, time) to create rainbows or variations.",
   audioSensitivity: "Amplifies how much the microphone volume affects visual elements.",
   audioToWidth: "If enabled, loud sounds will make lines thicker.",

@@ -3,12 +3,13 @@ import {
   Edit3, Zap, Trash2, Save, FolderOpen, Anchor, Grid3X3, SplitSquareHorizontal, 
   Filter, Info, X, Users, PaintBucket, Link2, Link2Off, MinusCircle, Plus, 
   Palette, Spline as SplineIcon, Move, Magnet, Tornado, Network, Eye, EyeOff, 
-  Unplug, Globe, Upload, Check, RefreshCw, Shuffle
+  Unplug, Globe, Upload, Check, RefreshCw, Shuffle, Link as LinkIcon, RefreshCcw,
+  Cpu, Download
 } from 'lucide-react';
 import { 
   SimulationParams, SoundConfig, GridConfig, SymmetryConfig, GlobalForceType, 
   GlobalToolConfig, Preset, UITheme, ModulationConfig, BlendMode, 
-  LineCapMode, SoundVolumeSource, SoundPlaybackMode, EasingMode 
+  LineCapMode, SoundVolumeSource, SoundPlaybackMode, EasingMode, Connection 
 } from '../../types';
 import { 
   DEFAULT_PARAMS, DEFAULT_SOUND, PARAMS_GROUPS, PARAM_RANGES, PARAM_DESCRIPTIONS, 
@@ -35,6 +36,15 @@ interface SettingsPanelProps {
   presets: Preset[];
   activePresetName: string | null;
   lockedParams: Set<string>;
+  
+  // Connections
+  selectedConnectionIds: Set<string>;
+  selectedConnectionParams: Connection | null;
+  updateConnectionParam: (key: keyof Connection, value: any) => void;
+
+  // System
+  ecoMode: boolean;
+  setEcoMode: (val: boolean) => void;
 
   // Setters / Actions
   setSelectedStrokeId: (id: string | null) => void;
@@ -71,12 +81,15 @@ interface SettingsPanelProps {
   deletePreset: (index: number) => void;
   saveNewPreset: (name: string, desc: string) => void;
   exportPresets: () => void;
+  exportSinglePreset: () => void;
   triggerImportPresets: () => void;
 
   // Sound
   handleSoundUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleBufferReady: (buffer: AudioBuffer) => void;
   removeSound: () => void;
+  
+  onSyncSelected?: () => void;
 }
 
 const SidebarSeparator = ({ theme }: { theme: UITheme }) => (
@@ -96,8 +109,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   
   // Sections State
   const [sections, setSections] = useState({
-    project: false, guides: false, presets: true, physics: false, visuals: false, 
+    system: false, project: false, guides: false, presets: true, physics: false, visuals: false, 
     shape: false, social: false, audio: false, soundDesign: false, globalTools: false, 
+    connections: true
   });
   
   // Preset Naming State
@@ -108,7 +122,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   // Derived Values
   const currentParams = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
   const currentSound = (selectedStrokeId && props.selectedStrokeSound) ? props.selectedStrokeSound : props.brushSound;
-  const modeTitle = selectedStrokeId ? "Editing Selection" : "Settings";
+  const hasMultipleSelection = (selectedStrokeId && props.selectedStrokeParams === null) || (props.selectedConnectionIds.size > 1) || (selectedStrokeId && props.selectedStrokeParams); 
+  
+  const modeTitle = selectedStrokeId ? "Editing Selection" : (props.selectedConnectionIds.size > 0 ? "Editing Link" : "Settings");
 
   // --- HELPERS ---
   const toggleSection = (key: keyof typeof sections) => setSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -184,7 +200,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
               project: prev.project,
               presets: true, 
               globalTools: prev.globalTools,
-              guides: prev.guides
+              guides: prev.guides,
+              connections: true
           }));
       }
   }, [showModifiedOnly, currentParams]); 
@@ -214,23 +231,53 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
       <div className="flex-none px-6 py-4 border-b border-slate-100 flex justify-between items-center cursor-grab active:cursor-grabbing" onPointerDown={handlePanelPointerDown} title="Drag to snap Left/Right">
           <div className="flex items-center gap-3">
             <h3 className="font-bold flex items-center gap-2 text-sm tracking-wide pointer-events-none">
-                {selectedStrokeId ? <Edit3 size={15} className="text-indigo-600"/> : <Zap size={15} className="text-amber-500" />}
+                {selectedStrokeId ? <Edit3 size={15} className="text-indigo-600"/> : (props.selectedConnectionIds.size > 0 ? <LinkIcon size={15} className="text-indigo-600" /> : <Zap size={15} className="text-amber-500" />)}
                 {modeTitle}
             </h3>
           </div>
-          {selectedStrokeId && (
+          {(selectedStrokeId || props.selectedConnectionIds.size > 0) && (
             <div className="flex items-center gap-2">
-              <button onClick={() => props.setDeleteSelectedTrigger(t => t + 1)} className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm">
+              <button 
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => props.setDeleteSelectedTrigger(t => t + 1)} 
+                  className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                  title="Delete Selected"
+              >
                 <Trash2 size={14} />
               </button>
-              <button onClick={() => { props.setSelectedStrokeId(null); props.setSelectedStrokeParams(null); }} className="text-[10px] bg-indigo-600 text-white px-3 py-1.5 rounded-full font-bold hover:bg-indigo-700 shadow-md transition-colors">
-                DONE
-              </button>
+              {selectedStrokeId && (
+                  <button 
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={props.onSyncSelected} 
+                      title="Sync All Selected to Current Leader" 
+                      className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm"
+                  >
+                      <RefreshCcw size={14} />
+                  </button>
+              )}
             </div>
           )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 custom-scrollbar scroll-smooth">
+          
+          {props.selectedConnectionIds.size > 0 && props.selectedConnectionParams && (
+              <>
+                <SectionHeader title="Connection Settings" isOpen={sections.connections} onToggle={() => toggleSection('connections')} />
+                {sections.connections && (
+                    <div className="pb-4 space-y-2 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/50">
+                        <Slider label="Stiffness" value={props.selectedConnectionParams.stiffness} min={0.01} max={1} step={0.01} onChange={(v) => props.updateConnectionParam('stiffness', v)} />
+                        <Slider label="Breaking Force" value={props.selectedConnectionParams.breakingForce} min={0} max={200} step={1} onChange={(v) => props.updateConnectionParam('breakingForce', v)} />
+                        <Slider label="Influence" value={props.selectedConnectionParams.bias} min={0} max={1} step={0.1} onChange={(v) => props.updateConnectionParam('bias', v)} description="Pull Bias: 0=Start, 1=End" />
+                        <Slider label="Propagation" value={props.selectedConnectionParams.influence} min={0} max={20} step={1} onChange={(v) => props.updateConnectionParam('influence', v)} />
+                        <Slider label="Decay" value={props.selectedConnectionParams.falloff} min={0} max={1} step={0.1} onChange={(v) => props.updateConnectionParam('falloff', v)} />
+                        <Select label="Decay Curve" value={props.selectedConnectionParams.decayEasing || 'linear'} options={['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'step']} onChange={(v) => props.updateConnectionParam('decayEasing', v as EasingMode)} />
+                    </div>
+                )}
+                <SidebarSeparator theme={theme} />
+              </>
+          )}
+
           <SectionHeader title="Project Files" isOpen={sections.project} onToggle={() => toggleSection('project')} />
           {sections.project && (
               <div className="pb-4 space-y-2 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
@@ -303,6 +350,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 </div>
                 <div className="flex gap-2 mb-4">
                     <PanelButton onClick={props.exportPresets} label="EXPORT ALL" icon={<Save size={10} />} />
+                    <PanelButton onClick={props.exportSinglePreset} label="EXPORT SELECTION" icon={<Download size={10} />} title="Export current settings as a single preset file" />
                     <PanelButton onClick={props.triggerImportPresets} label="IMPORT" icon={<FolderOpen size={10} />} />
                 </div>
                 {isNamingPreset ? (
@@ -469,13 +517,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                         {shouldShow('waveSpeed') && <Slider label="Speed" value={currentParams.waveSpeed} min={0} max={0.5} step={0.01} onChange={(v) => props.updateParam('waveSpeed', v)} {...getCommonProps('waveSpeed')} />}
                     </div>
                 )}
-                {(!showModifiedOnly || [shouldShow('breathingAmp'), shouldShow('breathingFreq')].some(Boolean)) && (
-                    <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                        <div className="text-[9px] font-bold text-slate-500 mb-2 uppercase tracking-widest">Breathing</div>
-                        {shouldShow('breathingAmp') && <Slider label="Amplitude" value={currentParams.breathingAmp} min={0} max={10} step={0.1} onChange={(v) => props.updateParam('breathingAmp', v)} {...getCommonProps('breathingAmp')} />}
-                        {shouldShow('breathingFreq') && <Slider label="Frequency" value={currentParams.breathingFreq} min={0.01} max={0.2} step={0.01} onChange={(v) => props.updateParam('breathingFreq', v)} {...getCommonProps('breathingFreq')} />}
-                    </div>
-                )}
                 </div>
               )}
               <SidebarSeparator theme={theme} />
@@ -595,6 +636,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   )}
                 </div>
             </div>
+          )}
+          
+          {/* SYSTEM SETTINGS - MOVED TO BOTTOM */}
+          <SidebarSeparator theme={theme} />
+          <SectionHeader title="System & Performance" isOpen={sections.system} onToggle={() => toggleSection('system')} />
+          {sections.system && (
+              <div className="pb-4 space-y-2 bg-slate-100/50 p-3 rounded-xl border border-slate-200/50">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 font-bold text-[10px] uppercase tracking-widest text-slate-500"><Cpu size={12} /> Performance</div>
+                    <Toggle label="Eco Mode" value={props.ecoMode} onChange={(v) => props.setEcoMode(v)} description="Save battery by pausing rendering when idle." />
+                  </div>
+                  <div className="text-[9px] text-slate-400 italic">Disable Eco Mode if you experience input lag or visual stuttering.</div>
+              </div>
           )}
       </div>
       <div className="mt-auto pt-4 pb-2 border-t border-slate-100 text-[10px] text-slate-400 text-center font-medium tracking-wide"> vibe coded by <a href="http://www.ivangulizia.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo-500 text-slate-500 transition-colors">Ivan Gulizia</a> </div>

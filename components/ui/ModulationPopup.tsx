@@ -1,5 +1,5 @@
 import React from 'react';
-import { Minus, MoreHorizontal, Clock, ArrowLeftRight, ArrowRightFromLine } from 'lucide-react';
+import { Minus, MoreHorizontal, Clock, ArrowLeftRight, ArrowRightFromLine, Timer, Activity } from 'lucide-react';
 import { ModulationConfig, ModulationSource, EasingMode } from '../../types';
 import { BezierEditor } from './BezierEditor';
 
@@ -9,11 +9,25 @@ interface ModulationPopupProps {
   baseValue: number;
 }
 
+// Extraction du composant pour éviter les re-renders inutiles et la perte de focus
+const MiniSlider = ({ label, value, min, max, step, onChange, unit = "" }: any) => (
+  <div className="flex items-center gap-2">
+    <span className="text-[9px] font-bold text-slate-400 w-16 text-right">{label}</span>
+    <input 
+        type="range" min={min} max={max} step={step} value={value} 
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="flex-1 accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+    />
+    <span className="text-[9px] font-mono text-slate-500 w-6">{value.toFixed(1)}{unit}</span>
+  </div>
+);
+
 export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChange, baseValue }) => {
   const source = config?.source || 'none';
   const easing = config?.easing || 'linear';
   const scope = config?.scope || 'stroke';
   const speed = config?.speed ?? 1;
+  const speedStrategy = config?.speedStrategy || 'frequency';
   const inputMin = config?.inputMin ?? 0;
   const inputMax = config?.inputMax ?? 1;
   const invert = config?.invertDirection || false;
@@ -29,11 +43,12 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
         max: config?.max ?? baseValue,
         easing: config?.easing ?? 'linear',
         speed: config?.speed ?? 1,
+        speedStrategy: 'frequency',
         inputMin: 0,
         inputMax: 1,
         paramA: 0.5, 
-        paramB: 0.5,
-        paramC: 0.5,
+        paramB: 0.1, // Adjusted default smoothing for pulse
+        paramC: 0, // Default loop delay 0
         paramD: 0.5,
         paramE: 0, 
         paramF: 1, 
@@ -47,18 +62,6 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
       onChange({ ...config, ...updates });
     }
   };
-
-  const MiniSlider = ({ label, value, min, max, step, onChange, unit = "" }: any) => (
-      <div className="flex items-center gap-2">
-        <span className="text-[9px] font-bold text-slate-400 w-12 text-right">{label}</span>
-        <input 
-            type="range" min={min} max={max} step={step} value={value} 
-            onChange={(e) => onChange(parseFloat(e.target.value))}
-            className="flex-1 accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-        />
-        <span className="text-[9px] font-mono text-slate-500 w-6">{value.toFixed(1)}{unit}</span>
-      </div>
-  );
 
   const isTimeBased = source.startsWith('time');
 
@@ -76,7 +79,8 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
               <option value="none">Fixed Value</option>
               <optgroup label="Generative">
                 <option value="random">Random</option>
-                <option value="index">Stroke Index</option>
+                <option value="index">Global Stroke Index</option>
+                <option value="selection-index">Selection Index (Relative)</option>
                 <option value="time">Time (Loop)</option>
                 <option value="time-pulse">Time (Pulse/Pause)</option>
                 <option value="time-step">Time (Step)</option>
@@ -123,19 +127,39 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
               {isTimeBased && (
                  <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-500 uppercase w-10 text-[9px] tracking-wider">Speed</span>
+                        <span className="font-bold text-slate-500 uppercase w-10 text-[9px] tracking-wider">Unit</span>
+                        <div className="flex flex-1 bg-slate-200/50 p-0.5 rounded-lg border border-slate-200">
+                            <button 
+                              onClick={() => updateConfig({ speedStrategy: 'frequency' })}
+                              className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md transition-all ${speedStrategy === 'frequency' ? 'bg-white text-indigo-600 shadow-sm font-bold' : 'text-slate-400 hover:text-slate-600'}`}
+                              title="Frequency (Hz) - Cycles per second"
+                            >
+                               <Activity size={10} strokeWidth={2.5} /> <span className="text-[9px]">Freq (Hz)</span>
+                            </button>
+                            <button 
+                              onClick={() => updateConfig({ speedStrategy: 'duration' })}
+                              className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md transition-all ${speedStrategy === 'duration' ? 'bg-white text-indigo-600 shadow-sm font-bold' : 'text-slate-400 hover:text-slate-600'}`}
+                              title="Duration (s) - Seconds per cycle"
+                            >
+                               <Timer size={10} strokeWidth={2.5} /> <span className="text-[9px]">Duration (s)</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-500 uppercase w-10 text-[9px] tracking-wider">{speedStrategy === 'frequency' ? 'Speed' : 'Time'}</span>
                         <div className="flex flex-1 items-center gap-2">
                             <Clock size={12} className="text-slate-400" />
                             <input 
                             type="range" 
                             min="0.1" 
-                            max="5" 
+                            max={speedStrategy === 'frequency' ? 5 : 10} 
                             step="0.1" 
                             value={speed}
                             onChange={(e) => updateConfig({ speed: parseFloat(e.target.value) })}
                             className="flex-1 accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
                             />
-                            <span className="text-[9px] font-mono w-6 text-right text-slate-500">{speed.toFixed(1)}x</span>
+                            <span className="text-[9px] font-mono w-8 text-right text-slate-500">{speed.toFixed(1)}{speedStrategy === 'frequency' ? 'x' : 's'}</span>
                         </div>
                     </div>
                     <div className="flex items-center justify-between bg-slate-100/50 p-2 rounded-lg border border-slate-200">
@@ -155,8 +179,9 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
               {source === 'time-pulse' && (
                   <div className="space-y-1 bg-slate-100/50 p-2 rounded-lg border border-slate-200">
                       <div className="text-[8px] font-bold text-slate-400 uppercase tracking-wide mb-1">Pulse Settings</div>
-                      <MiniSlider label="Duty" value={config?.paramA ?? 0.5} min={0.1} max={0.9} step={0.01} onChange={(v:number) => updateConfig({paramA: v})} unit="%" />
-                      <MiniSlider label="Pause" value={config?.paramB ?? 0.5} min={0} max={1} step={0.01} onChange={(v:number) => updateConfig({paramB: v})} unit="s" />
+                      <MiniSlider label="Active Time" value={config?.paramA ?? 0.5} min={0.1} max={0.9} step={0.01} onChange={(v:number) => updateConfig({paramA: v})} unit="%" />
+                      <MiniSlider label="Soft Edge" value={config?.paramB ?? 0.1} min={0} max={0.5} step={0.01} onChange={(v:number) => updateConfig({paramB: v})} unit="s" />
+                      <MiniSlider label="Loop Delay" value={config?.paramC ?? 0} min={0} max={2} step={0.1} onChange={(v:number) => updateConfig({paramC: v})} unit="x" />
                   </div>
               )}
 

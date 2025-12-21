@@ -16,6 +16,7 @@ export type ModulationSource =
   | 'none' 
   | 'random' 
   | 'index' // Based on stroke index
+  | 'selection-index' // NEW: Based on index within selection
   | 'time' // Linear loop 0 -> 1 based on time
   | 'time-sine' // Legacy: Automatic sine wave
   | 'time-pulse' // NEW: Hold at peaks
@@ -67,7 +68,8 @@ export interface ModulationConfig {
   scope: ModulationScope; // Apply per stroke or per point
   min: number;
   max: number;
-  speed?: number; // Speed multiplier for time-based modulation
+  speed?: number; // Speed multiplier or Duration in seconds
+  speedStrategy?: 'frequency' | 'duration'; // NEW: Hz vs Seconds
   easing?: EasingMode;
   
   // NEW: Input Control
@@ -214,8 +216,6 @@ export interface SimulationParams {
   wiggleAmplitude: number;
   wiggleFrequency: number;
   waveSpeed: number;
-  breathingAmp: number;
-  breathingFreq: number;
   
   // --- SOCIAL (Swarm/Boids) ---
   neighborRadius: number;
@@ -245,6 +245,8 @@ export interface SimulationParams {
 export interface Stroke {
   id: string;
   index: number; // Order in the stack
+  selectionIndex?: number; // NEW: Persisted index relative to the selection group
+  selectionTotal?: number; // NEW: Total size of the selection group when applied
   points: Point[];
   center: { x: number, y: number };
   originCenter: { x: number, y: number }; // Initial center position for displacement calculations
