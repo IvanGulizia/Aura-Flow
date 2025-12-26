@@ -552,7 +552,7 @@ export default function App() {
 
   return (
     <div 
-       className="relative w-full h-screen overflow-hidden text-slate-800 transition-all duration-300"
+       className="relative w-full h-[100dvh] overflow-hidden text-slate-800 transition-all duration-300"
        style={{ 
          backgroundColor: 'var(--canvas-bg)',
          border: `${uiTheme.screenBorderWidth}px solid ${uiTheme.screenBorderColor}`,

@@ -477,6 +477,33 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       };
   };
 
+  // Helper to add point logic, reused for coalesced events
+  const addPointToActiveStrokes = (x: number, y: number, pressure: number) => {
+      activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
+      
+      const symPoints = getSymmetryPoints(x, y);
+      
+      activeStrokesRef.current.forEach((stroke, idx) => {
+        if (idx >= symPoints.length) return;
+        const target = symPoints[idx];
+        const lastP = stroke.points[stroke.points.length - 1];
+        
+        // Simple distance check to avoid piling up points
+        if (((target.x - lastP.x) ** 2 + (target.y - lastP.y) ** 2) >= stroke.params.segmentation ** 2) {
+             stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
+             
+             // Update center
+             let cx = 0, cy = 0;
+             stroke.points.forEach(p => { cx += p.x; cy += p.y; });
+             stroke.center.x = cx / stroke.points.length;
+             stroke.center.y = cy / stroke.points.length;
+             if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center };
+             
+             needsRedrawRef.current = true;
+        }
+      });
+  };
+
   const getStrokeAtPosition = (x: number, y: number): Stroke | null => {
     for (let i = strokesRef.current.length - 1; i >= 0; i--) {
       const stroke = strokesRef.current[i];
@@ -549,6 +576,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   // --- INPUT HANDLING ---
   const handlePointerDown = (e: React.PointerEvent) => {
+    // Prevent default browser behavior (scrolling/zooming)
+    e.preventDefault(); 
+    
     if (onCanvasInteraction) onCanvasInteraction();
     e.currentTarget.setPointerCapture(e.pointerId);
     
@@ -613,11 +643,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     const baseId = Date.now().toString();
     const effectiveSeamless = gridConfig.enabled ? false : brushParams.seamlessPath;
     
+    // Initial pressure from pen
+    const initialPressure = e.pressure !== 0.5 && e.pressure > 0 ? e.pressure : 0.5;
+
     symPoints.forEach((p, idx) => {
        const newStroke: Stroke = {
           id: `${baseId}-${idx}`,
           index: strokesRef.current.length + idx,
-          points: [{ x: p.x, y: p.y, baseX: p.x, baseY: p.y, vx: 0, vy: 0, pressure: 0.5 }],
+          points: [{ x: p.x, y: p.y, baseX: p.x, baseY: p.y, vx: 0, vy: 0, pressure: initialPressure }],
           center: { x: p.x, y: p.y },
           originCenter: { x: p.x, y: p.y },
           velocity: { x: 0, y: 0 },
@@ -633,6 +666,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    // Prevent scrolling on touch devices
+    e.preventDefault();
+
     // Use mapped coordinates
     const { x: rawX, y: rawY } = getPointerCoordinates(e);
     const { x, y } = (pointerRef.current.isDown && interactionMode === 'draw') ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
@@ -658,28 +694,61 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       if (distSq > 4) pointerRef.current.hasMoved = true;
 
       if (pointerRef.current.hasMoved) {
-          activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
+          // --- COALESCED EVENTS SUPPORT (High-Frequency Drawing for iPad Pro / Stylus) ---
+          const events = e.nativeEvent.getCoalescedEvents ? e.nativeEvent.getCoalescedEvents() : [e.nativeEvent];
           
-          const symPoints = getSymmetryPoints(x, y);
-          activeStrokesRef.current.forEach((stroke, idx) => {
-            if (idx >= symPoints.length) return;
-            const target = symPoints[idx];
-            const lastP = stroke.points[stroke.points.length - 1];
-            if (((target.x - lastP.x) ** 2 + (target.y - lastP.y) ** 2) >= stroke.params.segmentation ** 2) {
-                 const speed = Math.hypot(x - pointerRef.current.lastX, y - pointerRef.current.lastY);
-                 const pressure = Math.min(1, Math.max(0.01, speed / 30)); 
-                 stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
-                 
-                 let cx = 0, cy = 0;
-                 stroke.points.forEach(p => { cx += p.x; cy += p.y; });
-                 stroke.center.x = cx / stroke.points.length;
-                 stroke.center.y = cy / stroke.points.length;
-                 if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center };
-                 needsRedrawRef.current = true;
-            }
-        });
-        pointerRef.current.lastX = x;
-        pointerRef.current.lastY = y;
+          if (events.length > 0) {
+              for (const ev of events) {
+                  // Re-map coordinates for each coalesced event
+                  // Note: We need manual mapping here because getPointerCoordinates uses the React SyntheticEvent or main event
+                  const rect = canvasRef.current?.getBoundingClientRect();
+                  if (!rect) continue;
+                  
+                  const evRawX = ev.clientX - rect.left;
+                  const evRawY = ev.clientY - rect.top;
+                  
+                  let evX = evRawX;
+                  let evY = evRawY;
+
+                  // Apply Embed Transform if active
+                  if (embedFit) {
+                      const { scale, x: tx, y: ty } = viewTransformRef.current;
+                      evX = (evRawX - tx) / scale;
+                      evY = (evRawY - ty) / scale;
+                  }
+
+                  // Apply Grid Snap
+                  if (interactionMode === 'draw' && gridConfig.enabled && gridConfig.snap) {
+                      const snapped = snapToGrid(evX, evY);
+                      evX = snapped.x;
+                      evY = snapped.y;
+                  }
+
+                  // Calculate Pressure
+                  let pressure = 0.5;
+                  if (ev.pressure !== 0.5 && ev.pressure > 0) {
+                      // Use native pressure if available and not default "0.5"
+                      pressure = ev.pressure;
+                  } else {
+                      // Fallback to speed-based pressure
+                      const dist = Math.hypot(evX - pointerRef.current.lastX, evY - pointerRef.current.lastY);
+                      pressure = Math.min(1, Math.max(0.01, dist / 30));
+                  }
+
+                  addPointToActiveStrokes(evX, evY, pressure);
+                  
+                  // Update last known position for next coalesced point calculation
+                  pointerRef.current.lastX = evX;
+                  pointerRef.current.lastY = evY;
+              }
+          } else {
+              // Fallback for browsers without coalesced events
+              const speed = Math.hypot(x - pointerRef.current.lastX, y - pointerRef.current.lastY);
+              const pressure = e.pressure !== 0.5 && e.pressure > 0 ? e.pressure : Math.min(1, Math.max(0.01, speed / 30)); 
+              addPointToActiveStrokes(x, y, pressure);
+              pointerRef.current.lastX = x;
+              pointerRef.current.lastY = y;
+          }
       }
     }
   };
