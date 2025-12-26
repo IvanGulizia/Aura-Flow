@@ -30,7 +30,7 @@ interface CanvasProps {
   deleteAllLinksTrigger: number;
   onStrokeSelect: (strokeIds: string[] | string | null, params: SimulationParams | null, sound: SoundConfig | null, connectionIds: string[] | string | null, connectionParams: Connection | null) => void;
   onCanvasInteraction?: () => void;
-  embedFit?: 'cover' | 'contain' | null; // NEW: Fit mode for embed
+  embedFit?: 'cover' | 'contain' | null;
 }
 
 export interface CanvasHandle {
@@ -66,7 +66,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   deleteAllLinksTrigger,
   onStrokeSelect,
   onCanvasInteraction,
-  embedFit // Destructure new prop
+  embedFit
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -364,7 +364,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY, cx: (minX+maxX)/2, cy: (minY+maxY)/2 };
   };
 
-  // NEW: Get global bounds of all strokes to center content in embed mode
   const getGlobalBounds = () => {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       const allStrokes = [...strokesRef.current, ...activeStrokesRef.current];
@@ -382,7 +381,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       
       if (!isFinite(minX)) return null;
       
-      // Add padding for better visual
       const padding = 20;
       minX -= padding;
       maxX += padding;
@@ -395,6 +393,67 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           height: maxY - minY, 
           cx: (minX + maxX) / 2, 
           cy: (minY + maxY) / 2 
+      };
+  };
+
+  // --- VIEWPORT TRANSFORM LOGIC ---
+  const getFitTransform = () => {
+      if (!embedFit || !canvasRef.current) return { scale: 1, x: 0, y: 0 };
+      
+      const bounds = getGlobalBounds();
+      if (!bounds) return { scale: 1, x: 0, y: 0 };
+
+      const canvasW = canvasRef.current.width;
+      const canvasH = canvasRef.current.height;
+      const contentW = bounds.width || 1;
+      const contentH = bounds.height || 1;
+      
+      const scaleX = canvasW / contentW;
+      const scaleY = canvasH / contentH;
+      
+      let scale = 1;
+      if (embedFit === 'contain') {
+          scale = Math.min(scaleX, scaleY);
+          // Limit max upscaling to avoid blurry rendering if content is tiny
+          if (scale > 5) scale = 5;
+      } else if (embedFit === 'cover') {
+          scale = Math.max(scaleX, scaleY);
+      }
+      
+      // We want to center the content.
+      // Target Center: canvasW/2, canvasH/2
+      // Source Center: bounds.cx, bounds.cy
+      // Transform logic: 
+      // 1. Translate to origin relative to content center: (P - bounds.cx)
+      // 2. Scale: (P - bounds.cx) * scale
+      // 3. Translate to canvas center: (P - bounds.cx) * scale + (canvasW/2)
+      //
+      // Effectively: P * scale + (canvasW/2 - bounds.cx * scale)
+      // So Translate X = canvasW/2 - bounds.cx * scale
+      
+      const tx = (canvasW / 2) - (bounds.cx * scale);
+      const ty = (canvasH / 2) - (bounds.cy * scale);
+
+      return { scale, x: tx, y: ty };
+  };
+
+  const getPointerCoordinates = (e: React.PointerEvent) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+      
+      const rawX = e.clientX - rect.left;
+      const rawY = e.clientY - rect.top;
+
+      if (!embedFit) return { x: rawX, y: rawY };
+
+      const { scale, x: tx, y: ty } = getFitTransform();
+      
+      // Inverse Transform
+      // Screen = World * scale + translate
+      // World = (Screen - translate) / scale
+      return {
+          x: (rawX - tx) / scale,
+          y: (rawY - ty) / scale
       };
   };
 
@@ -470,15 +529,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   // --- INPUT HANDLING ---
   const handlePointerDown = (e: React.PointerEvent) => {
-    // Disable interactions if in embed mode to prevent coordinate mismatch issues due to transform
-    if (embedFit) return;
-
     if (onCanvasInteraction) onCanvasInteraction();
     e.currentTarget.setPointerCapture(e.pointerId);
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const rawX = e.clientX - rect.left;
-    const rawY = e.clientY - rect.top;
+    
+    // Use mapped coordinates
+    const { x: rawX, y: rawY } = getPointerCoordinates(e);
     const { x, y } = snapToGrid(rawX, rawY);
 
     pointerRef.current = { ...pointerRef.current, isDown: true, x, y, startX: x, startY: y, lastX: x, lastY: y, hasMoved: false };
@@ -558,12 +613,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (embedFit) return;
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const rawX = e.clientX - rect.left;
-    const rawY = e.clientY - rect.top;
+    // Use mapped coordinates
+    const { x: rawX, y: rawY } = getPointerCoordinates(e);
     const { x, y } = (pointerRef.current.isDown && interactionMode === 'draw') ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
 
     pointerRef.current.x = x;
@@ -614,14 +665,17 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    if (embedFit) return;
-
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch(err) {}
     pointerRef.current.isDown = false;
     
+    // Mapped coordinates required for selection box logic
+    const { x: rawX, y: rawY } = getPointerCoordinates(e);
+
     if (selectionBoxRef.current.active) {
         const sx = selectionBoxRef.current.startX;
         const sy = selectionBoxRef.current.startY;
+        // Use current pointer pos which is updated via Move, or calculate here if needed.
+        // selectionBoxRef.current.currentX/Y are in World Space already from handlePointerMove.
         const w = selectionBoxRef.current.currentX - sx;
         const h = selectionBoxRef.current.currentY - sy;
         
@@ -646,12 +700,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
 
     if (globalForceTool === 'connect' && pointerRef.current.connectionStart) {
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (rect) {
-            const rawX = e.clientX - rect.left;
-            const rawY = e.clientY - rect.top;
-            const closest = getClosestPoint(rawX, rawY, 40);
-            if (closest && !(closest.strokeId === pointerRef.current.connectionStart.strokeId && closest.pointIndex === pointerRef.current.connectionStart.pointIndex)) {
+        // Use rawX/rawY from mapped input
+        const closest = getClosestPoint(rawX, rawY, 40);
+        if (closest && !(closest.strokeId === pointerRef.current.connectionStart.strokeId && closest.pointIndex === pointerRef.current.connectionStart.pointIndex)) {
                 connectionsRef.current.push({
                     id: `conn-${Date.now()}`,
                     from: pointerRef.current.connectionStart,
@@ -670,7 +721,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     redoStackRef.current = [];
                 }
                 needsRedrawRef.current = true;
-            }
         }
         pointerRef.current.connectionStart = null;
         return;
@@ -1034,32 +1084,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     // --- VIEWPORT TRANSFORMATION FOR EMBED ---
     ctx.save();
     
-    if (embedFit) {
-        const bounds = getGlobalBounds();
-        if (bounds && bounds.width > 0 && bounds.height > 0) {
-            const canvasW = canvas.width;
-            const canvasH = canvas.height;
-            const contentW = bounds.width;
-            const contentH = bounds.height;
-            
-            const scaleX = canvasW / contentW;
-            const scaleY = canvasH / contentH;
-            
-            let scale = 1;
-            if (embedFit === 'contain') {
-                scale = Math.min(scaleX, scaleY);
-                // Ensure we don't upscale too much if content is tiny, but generally we want to fit.
-            } else if (embedFit === 'cover') {
-                scale = Math.max(scaleX, scaleY);
-            }
-            
-            // Move to center of canvas
-            ctx.translate(canvasW / 2, canvasH / 2);
-            // Apply Scale
-            ctx.scale(scale, scale);
-            // Move back by center of content
-            ctx.translate(-bounds.cx, -bounds.cy);
-        }
+    // Apply camera transform to context
+    const { scale, x, y } = getFitTransform();
+    if (scale !== 1 || x !== 0 || y !== 0) {
+        ctx.translate(x, y);
+        ctx.scale(scale, scale);
     }
 
     // Helper: Fillet (Rounded Corner) Path for ONE continuous path (Batch)
