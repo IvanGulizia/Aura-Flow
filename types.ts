@@ -44,7 +44,7 @@ export type EasingMode =
 
 export type ModulationScope = 'stroke' | 'point';
 
-export type GlobalForceType = 'none' | 'repulse' | 'attract' | 'vortex' | 'connect';
+export type GlobalForceType = 'none' | 'repulse' | 'attract' | 'vortex' | 'connect' | 'cursor';
 
 export type GlobalToolTrigger = 'click' | 'hover';
 

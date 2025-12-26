@@ -87,14 +87,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   const preDrawSnapshotRef = useRef<{strokes: Stroke[], connections: Connection[]} | null>(null);
 
   // --- LATEST PROPS REF PATTERN ---
-  // Store all props in a ref so the native event listeners (added once on mount)
-  // can always access the freshest React state without needing re-binding.
   const latestProps = useRef(props);
   useEffect(() => {
       latestProps.current = props;
   });
 
-  // --- HELPER FUNCTIONS (Lifted to be accessible by effect) ---
+  // --- HELPER FUNCTIONS ---
   
   const getPointerCoordinates = (e: PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
@@ -154,24 +152,17 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   };
 
   // --- NATIVE EVENT LISTENERS ---
-  // Using native listeners allows us to use { passive: false } which is CRITICAL for iOS to prevent scrolling.
-  // React's Synthetic Events often struggle with this on iPad.
 
   useEffect(() => {
-    const canvas = containerRef.current; // Attach to container for wider hit area
+    const canvas = containerRef.current; 
     if (!canvas) return;
 
-    // --- HANDLERS (Defined inside effect to capture scope if needed, but relying on refs) ---
-
     const handleNativePointerDown = (e: PointerEvent) => {
-        // CRITICAL: Stop iOS scrolling/rubber-banding immediately
         e.preventDefault();
         
-        const P = latestProps.current; // Access fresh props
-        
+        const P = latestProps.current;
         if (P.onCanvasInteraction) P.onCanvasInteraction();
         
-        // Capture pointer specifically on the target to track outside movement
         try { (e.target as Element).setPointerCapture(e.pointerId); } catch(err){}
 
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
@@ -180,7 +171,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         pointerRef.current = { ...pointerRef.current, isDown: true, x, y, startX: x, startY: y, lastX: x, lastY: y, hasMoved: false };
         needsRedrawRef.current = true;
 
-        // Logic branching based on tools
         if (P.globalForceTool === 'connect') {
             const closest = getClosestPoint(rawX, rawY, 40);
             if (closest) {
@@ -190,7 +180,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             return;
         }
 
-        if (P.globalForceTool !== 'none') return; // Other force tools don't draw or select on down
+        if (P.globalForceTool !== 'none') return; // Blocks drawing for 'cursor', 'repulse', etc.
 
         if (P.interactionMode === 'select') {
             const hitStroke = P.selectionFilter === 'all' ? getStrokeAtPosition(rawX, rawY) : null;
@@ -198,7 +188,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (e.shiftKey) {
                     const newSet = new Set(P.selectedStrokeIds);
                     if (newSet.has(hitStroke.id)) newSet.delete(hitStroke.id); else newSet.add(hitStroke.id);
-                    // Build selection arrays
                     const arr = Array.from(newSet);
                     const primaryStroke = arr.length > 0 ? strokesRef.current.find(s => s.id === arr[arr.length-1]) : null;
                     const conns = Array.from(P.selectedConnectionIds);
@@ -254,16 +243,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             });
         });
         activeStrokesRef.current = newStrokes;
-        needsRedrawRef.current = true; // Force immediate frame
+        needsRedrawRef.current = true;
     };
 
     const handleNativePointerMove = (e: PointerEvent) => {
-        // Prevent default to stop scrolling
-        if (!e.cancelable) {
-            // passive listener issue check
-        } else {
-            e.preventDefault(); 
-        }
+        if (!e.cancelable) {} else { e.preventDefault(); }
 
         const P = latestProps.current;
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
@@ -287,7 +271,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         if (P.globalForceTool !== 'none' || P.interactionMode === 'select') return;
 
         if (pointerRef.current.isDown && activeStrokesRef.current.length > 0) {
-            // Reduced threshold for high sensitivity
             const distSq = (x - pointerRef.current.lastX) ** 2 + (y - pointerRef.current.lastY) ** 2;
             if (distSq > 0.5) pointerRef.current.hasMoved = true;
 
@@ -295,11 +278,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             
             if (events.length > 0) {
                 for (const ev of events) {
-                    // Re-calculate local coords for coalesced events
-                    // Note: getPointerCoordinates relies on rect, which doesn't change during stroke usually
                     const rect = canvasRef.current?.getBoundingClientRect();
                     if (!rect) continue;
-                    
                     let evX = ev.clientX - rect.left;
                     let evY = ev.clientY - rect.top;
 
@@ -330,12 +310,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     };
 
     const handleNativePointerUp = (e: PointerEvent) => {
-        // e.preventDefault() on Up isn't strictly necessary but good practice
         const P = latestProps.current;
         try { (e.target as Element).releasePointerCapture(e.pointerId); } catch(err) {}
         
         pointerRef.current.isDown = false;
-        
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
 
         if (selectionBoxRef.current.active) {
@@ -392,7 +370,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
 
         if (P.globalForceTool !== 'none' || P.interactionMode === 'select') return;
 
-        // Commit strokes
         if (activeStrokesRef.current.length > 0) {
             activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
             activeStrokesRef.current.forEach(s => {
@@ -417,20 +394,18 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     };
 
     const handlePointerCancel = (e: PointerEvent) => {
-        // Important for iOS: if the OS takes over (e.g. 4-finger swipe), we must clean up state
         pointerRef.current.isDown = false;
         pointerRef.current.connectionStart = null;
         selectionBoxRef.current.active = false;
-        activeStrokesRef.current = []; // Discard interrupted strokes or commit? Usually discard or leave as is.
+        activeStrokesRef.current = [];
         needsRedrawRef.current = true;
     };
 
-    // Attach Listeners
     canvas.addEventListener('pointerdown', handleNativePointerDown, { passive: false });
     canvas.addEventListener('pointermove', handleNativePointerMove, { passive: false });
     canvas.addEventListener('pointerup', handleNativePointerUp);
     canvas.addEventListener('pointercancel', handlePointerCancel);
-    canvas.addEventListener('pointerleave', handleNativePointerUp); // Fallback
+    canvas.addEventListener('pointerleave', handleNativePointerUp);
 
     return () => {
         canvas.removeEventListener('pointerdown', handleNativePointerDown);
@@ -439,10 +414,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         canvas.removeEventListener('pointercancel', handlePointerCancel);
         canvas.removeEventListener('pointerleave', handleNativePointerUp);
     };
-  }, []); // Run once on mount
+  }, []);
 
-  // ... (Legacy React effects for selection & resize remain below) ...
-
+  // ... (Effects for selection & props updates remain unchanged) ...
   useEffect(() => {
     if (selectedStrokeIds.size > 0) {
         let i = 0; const total = selectedStrokeIds.size;
@@ -468,7 +442,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       const canvasW = canvasRef.current.width;
       const canvasH = canvasRef.current.height;
       if (bounds.width <= 0 || bounds.height <= 0) return;
-      
       const scaleX = canvasW / bounds.width;
       const scaleY = canvasH / bounds.height;
       let scale = 1;
@@ -584,7 +557,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     triggerRedraw: () => { needsRedrawRef.current = true; }
   }));
 
-  // Effect Triggers
+  // Effect Triggers... (Unchanged)
   useEffect(() => {
     if (clearTrigger > 0) {
       saveToHistory(); strokesRef.current = []; connectionsRef.current = []; initialBoundsRef.current = null; viewTransformRef.current = { scale: 1, x: 0, y: 0 }; onStrokeSelect(null, null, null, null, null); audioManager.stopAll(); needsRedrawRef.current = true;
@@ -718,10 +691,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       });
   };
 
-  // --- DRAW LOOP & PHYSICS --- (Same logic as before, just using local methods)
-  // To save space, standard draw/physics methods are assumed identical to previous version, 
-  // but they use latestProps.current where props were used.
-
   const resolveParam = (baseValue: number, key: keyof SimulationParams, stroke: Stroke, pointPressure: number, cursorDistPoint: number, cursorDistCenter: number, cursorRadius: number, progress: number, pointIndex: number): number => {
     const config = stroke.params.modulations?.[key];
     if (!config) return baseValue;
@@ -776,7 +745,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const hasPointer = pointerRef.current.x > -100;
     pointerRef.current.lastX = pointerX; pointerRef.current.lastY = pointerY;
 
-    if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) {
+    // Global forces (Repulse/Attract/Vortex)
+    // EXCLUDE 'cursor' type from here, it shouldn't apply a global radius force
+    if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && P.globalForceTool !== 'cursor' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) {
        const influenceRadius = P.globalToolConfig.radius; const strength = P.globalToolConfig.force * 2; const falloffExp = P.globalToolConfig.falloff ? (1 + P.globalToolConfig.falloff * 2) : 1; 
        strokesRef.current.forEach(stroke => {
           stroke.points.forEach(p => {
@@ -791,7 +762,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
        });
     }
 
-    // Connections Physics
+    // Connections Physics... (unchanged)
     for (let i = connectionsRef.current.length - 1; i >= 0; i--) {
         const conn = connectionsRef.current[i];
         const s1 = strokesRef.current.find(s => s.id === conn.from.strokeId);
@@ -903,7 +874,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             fx += noiseX * 0.1; fy += noiseY * 0.1;
         }
         p.vx += fx * invMass + swarmF.vx; p.vy += fy * invMass + swarmF.vy;
-        if (hasPointer && P.globalForceTool === 'none' && (mouseRep > 0 || mouseAttr > 0) && pDist < influenceRadius) {
+        
+        // STROKE-SPECIFIC MOUSE FORCES (Enabled for 'none' AND 'cursor')
+        if (hasPointer && (P.globalForceTool === 'none' || P.globalForceTool === 'cursor') && (mouseRep > 0 || mouseAttr > 0) && pDist < influenceRadius) {
              const dist = pDist; const dx = pointerX - p.x; const dy = pointerY - p.y; const force = Math.pow(1 - (dist / influenceRadius), stroke.params.mouseFalloff || 1);
              if (mouseRep > 0) { p.vx -= (dx / dist) * force * mouseRep; p.vy -= (dy / dist) * force * mouseRep; }
              if (mouseAttr > 0) { p.vx += (dx / dist) * force * mouseAttr; p.vy += (dy / dist) * force * mouseAttr; }
@@ -921,6 +894,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   };
 
   const draw = () => {
+    // Draw code remains unchanged
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');

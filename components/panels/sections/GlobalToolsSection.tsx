@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Move, Magnet, Tornado, Network, Eye, EyeOff, Unplug, Globe } from 'lucide-react';
+import { Move, Magnet, Tornado, Network, Eye, EyeOff, Unplug, Globe, MousePointer } from 'lucide-react';
 import { Slider, Toggle, Select, SectionHeader } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
@@ -22,7 +22,8 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
       <SectionHeader title="Global Tools" isOpen={isOpen} onToggle={onToggle} />
       {isOpen && (
         <div className="pb-4 space-y-3 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-2">
+            <PanelButton onClick={() => setForceTool('cursor')} label="CURSOR" icon={<MousePointer size={16} />} active={globalForceTool === 'cursor'} className="flex-col" />
             <PanelButton onClick={() => setForceTool('repulse')} label="PUSH" icon={<Move size={16} />} active={globalForceTool === 'repulse'} className="flex-col" />
             <PanelButton onClick={() => setForceTool('attract')} label="PULL" icon={<Magnet size={16} />} active={globalForceTool === 'attract'} className="flex-col" />
             <PanelButton onClick={() => setForceTool('vortex')} label="SWIRL" icon={<Tornado size={16} />} active={globalForceTool === 'vortex'} className="flex-col" />
@@ -46,7 +47,7 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
                 <Select label="Decay Curve" value={globalToolConfig.connectionDecayEasing || 'linear'} options={['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'step']} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionDecayEasing: v as EasingMode }))} />
                 <div className="text-[9px] text-slate-500 italic p-2 bg-blue-50 border border-blue-100 rounded mt-2"> Drag between points to connect. Connect creates a spring physics constraint. </div>
               </div>
-            ) : (
+            ) : globalForceTool !== 'cursor' ? (
               <div className="animate-fade-in">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1"><Globe size={10} /> Tool Settings</span>
@@ -55,6 +56,10 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
                 <Slider label="Radius" value={globalToolConfig.radius} min={50} max={500} step={10} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, radius: v }))} />
                 <Slider label="Force" value={globalToolConfig.force} min={0.1} max={5} step={0.1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, force: v }))} />
                 <Slider label="Falloff" value={globalToolConfig.falloff} min={0} max={1} step={0.1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, falloff: v }))} />
+              </div>
+            ) : (
+              <div className="text-[9px] text-slate-500 italic p-2 bg-slate-100/50 border border-slate-200 rounded mt-2 text-center">
+                  Use this tool to interact with physics (Repulsion/Attraction defined in Stroke Settings) without drawing.
               </div>
             )}
           </div>
