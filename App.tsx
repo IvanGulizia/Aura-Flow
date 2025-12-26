@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Canvas, CanvasHandle } from './components/Canvas';
 import { IconButton } from './components/IconButtons';
@@ -9,7 +10,7 @@ import { SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, Globa
 import { audioManager } from './services/audioService';
 import { hexToRgba } from './utils/colorUtils';
 import { DEFAULT_PARAMS, DEFAULT_SOUND, DEFAULT_GLOBAL_TOOL, DEFAULT_GRID, DEFAULT_SYMMETRY, DEFAULT_THEME, PARAMS_GROUPS, PARAM_RANGES, DEFAULT_PRESETS, DEFAULT_PALETTE, BLEND_MODES } from './constants/defaults';
-import { Play, Pause, Mic, MicOff, Trash2, Settings, Undo, Redo, PenTool, MousePointer2, Volume2, VolumeX, Speaker, Loader2, Link as LinkIcon, Shuffle } from 'lucide-react';
+import { Play, Pause, Mic, MicOff, Trash2, Settings, Undo, Redo, PenTool, MousePointer2, Volume2, VolumeX, Speaker, Loader2, Link as LinkIcon, Shuffle, AlertCircle, RotateCcw } from 'lucide-react';
 
 const FloatingTooltip = ({ text, rect }: { text: string, rect: DOMRect }) => {
   const style: React.CSSProperties = {
@@ -45,6 +46,7 @@ export default function App() {
   
   const [embedMode, setEmbedMode] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
 
   const [brushParams, setBrushParams] = useState<SimulationParams>(DEFAULT_PARAMS);
   const [brushSound, setBrushSound] = useState<SoundConfig>(DEFAULT_SOUND);
@@ -103,25 +105,41 @@ export default function App() {
 
     const dataUrl = params.get('url') || params.get('data');
     if (dataUrl) {
+      loadProjectFromUrl(dataUrl);
+    }
+  }, []);
+
+  const loadProjectFromUrl = (url: string) => {
       setIsLoadingData(true);
-      fetch(dataUrl)
+      setLoadingError(null);
+      
+      fetch(url)
         .then(res => {
-          if (!res.ok) throw new Error("Failed to fetch data");
+          if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("text/html")) {
+              throw new Error("Invalid URL: Link points to a webpage, not Raw JSON. Use 'Raw' button on Gist.");
+          }
           return res.json();
         })
         .then(data => {
           if (canvasRef.current) {
             canvasRef.current.importData(data);
+          } else {
+             // Retry once if canvas not ready
+             setTimeout(() => {
+                 if (canvasRef.current) canvasRef.current.importData(data);
+             }, 500);
           }
         })
         .catch(err => {
-          console.error("Error loading project from URL:", err);
+          console.error("Error loading project:", err);
+          setLoadingError(err.message || "Failed to load project data");
         })
         .finally(() => {
           setIsLoadingData(false);
         });
-    }
-  }, []);
+  };
 
   useEffect(() => {
     localStorage.setItem('aura-flow-presets', JSON.stringify(presets));
@@ -435,6 +453,13 @@ export default function App() {
     setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
   };
 
+  const handleCopyJson = () => {
+    if (!canvasRef.current) return;
+    const data = canvasRef.current.exportData();
+    const json = JSON.stringify(data, null, 2);
+    navigator.clipboard.writeText(json).catch(err => console.error('Failed to copy json', err));
+  };
+
   const triggerImportProject = () => fileInputRef.current?.click();
   const handleImportProject = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const data = JSON.parse(ev.target?.result as string); if (canvasRef.current) canvasRef.current.importData(data); } catch (err) { alert("Invalid JSON"); } }; reader.readAsText(file); e.target.value = ''; };
   
@@ -539,6 +564,22 @@ export default function App() {
         </div>
       )}
 
+      {loadingError && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-red-50/95 backdrop-blur-sm p-6 text-center">
+              <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm border border-red-100">
+                  <AlertCircle size={40} className="text-red-500 mx-auto mb-3" />
+                  <h3 className="font-bold text-red-600 text-lg mb-2">Embed Error</h3>
+                  <p className="text-slate-600 text-xs mb-4">{loadingError}</p>
+                  <button 
+                      onClick={() => window.location.reload()} 
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-700 flex items-center gap-2 mx-auto"
+                  >
+                      <RotateCcw size={12} /> Reload
+                  </button>
+              </div>
+          </div>
+      )}
+
       <Canvas 
         ref={canvasRef}
         brushParams={brushParams}
@@ -547,9 +588,7 @@ export default function App() {
         symmetryConfig={symmetryConfig}
         selectedStrokeId={selectedStrokeId}
         selectedStrokeIds={selectedStrokeIds}
-        selectedStrokeParams={selectedStrokeParams}
         selectedConnectionIds={selectedConnectionIds}
-        selectedConnectionParams={selectedConnectionParams}
         isPlaying={isPlaying}
         isSoundEngineEnabled={isSoundEngineEnabled}
         isMicEnabled={isMicEnabled}
@@ -682,6 +721,7 @@ export default function App() {
             toggleLock={toggleLock}
             
             initiateSave={initiateSave}
+            onCopyJson={handleCopyJson} // NEW
             triggerImportProject={triggerImportProject}
             setResetPosTrigger={setResetPosTrigger}
             setDeleteSelectedTrigger={setDeleteSelectedTrigger}

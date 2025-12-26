@@ -46,7 +46,8 @@ export const PanelButton: React.FC<{
   active?: boolean;
   className?: string;
   disabled?: boolean;
-}> = ({ onClick, label, icon, active, className, disabled }) => {
+  title?: string;
+}> = ({ onClick, label, icon, active, className, disabled, title }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
 
@@ -54,6 +55,7 @@ export const PanelButton: React.FC<{
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
       onMouseDown={() => setIsPressed(true)}

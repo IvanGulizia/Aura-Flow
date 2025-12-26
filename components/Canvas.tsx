@@ -1,7 +1,8 @@
+
 import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useMemo } from 'react';
 import { Stroke, SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, GlobalToolConfig, EasingMode, GridConfig, SymmetryConfig, Point, Connection, PointReference, ProjectData } from '../types';
 import { audioManager } from '../services/audioService';
-import { getShiftedColor, interpolateColors } from '../utils/colorUtils';
+import { getShiftedColor, interpolateColors, hexToRgba } from '../utils/colorUtils';
 import { cubicBezier, warpOffset, getPseudoRandom, applyEasing, distanceToLineSegment } from '../utils/mathUtils';
 
 interface CanvasProps {
@@ -114,11 +115,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     needsRedrawRef.current = true;
   }, [selectedStrokeIds]);
 
-  // Force redraw on config changes (IMMEDIATELY)
+  // Force redraw on visual config changes (sets flag so ecoMode doesn't block it)
   useEffect(() => {
       needsRedrawRef.current = true;
-      draw(); // Immediate draw call to ensure guides appear instantly
-  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool]);
+  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter]);
 
   useImperativeHandle(ref, () => ({
     exportData: () => ({
@@ -1137,8 +1137,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
     // GRID
     if (gridConfig.visible && gridConfig.enabled) {
-       ctx.strokeStyle = `rgba(${parseInt(gridConfig.color.slice(1,3),16)}, ${parseInt(gridConfig.color.slice(3,5),16)}, ${parseInt(gridConfig.color.slice(5,7),16)}, ${gridConfig.opacity})`;
-       ctx.lineWidth = 1;
+       ctx.fillStyle = hexToRgba(gridConfig.color, gridConfig.opacity);
        const cx = canvas.width / 2;
        const cy = canvas.height / 2;
        const size = Math.max(10, gridConfig.size);
@@ -1150,10 +1149,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
            const x = cx + i * size;
            for (let j = -rows; j <= rows; j++) {
                const y = cy + j * size;
-               ctx.moveTo(x, y); ctx.arc(x, y, 1, 0, Math.PI * 2);
+               ctx.moveTo(x + 1.5, y); 
+               ctx.arc(x, y, 1.5, 0, Math.PI * 2);
            }
        }
-       ctx.stroke();
+       ctx.fill();
     }
     
     if (symmetryConfig.visible && symmetryConfig.enabled) {
@@ -1285,20 +1285,15 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       // FILL
       if (params.fill.enabled) {
           ctx.beginPath();
-          // Construct closed shape
           if (points.length > 2) {
              const p0 = points[0];
              ctx.moveTo(p0.x, p0.y);
              for (let i = 1; i < points.length; i++) {
-                // If smoothing enabled, we can use quadratic curves, but simple lineTo is safer for filling usually
                 ctx.lineTo(points[i].x, points[i].y);
              }
              if (params.closePath) {
                  ctx.closePath();
-             } else {
-                 // Even if not strictly closed path param, fill usually requires closing to start. 
-                 // Canvas fills automatically close start to end.
-             }
+             } 
           }
 
           ctx.globalCompositeOperation = params.fill.blendMode || 'source-over';
@@ -1313,9 +1308,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
           if (params.fill.type === 'gradient' || (params.fill.syncWithStroke && params.gradient.enabled)) {
                const bounds = getStrokeBounds(stroke);
-               // Determine gradient vector based on angle
                const angleRad = (params.fillGradientAngle || 0) * Math.PI / 180;
-               // Calculate gradient line within bounding box
                const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
                const gx1 = bounds.cx - Math.cos(angleRad) * r;
                const gy1 = bounds.cy - Math.sin(angleRad) * r;
@@ -1344,22 +1337,17 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         ctx.lineJoin = 'round';
         ctx.globalCompositeOperation = params.blendMode;
 
-        // Apply Blur Filter if set (For optimized drawing)
         if (params.blurStrength > 0 && !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth) {
             ctx.filter = `blur(${params.blurStrength}px)`;
         } else {
             ctx.filter = 'none';
         }
 
-        // PATH GRADIENT OPTIMIZATION
-        // If smooth modulation is off AND gradient type is linear AND no per-point color modulation, 
-        // we can draw the whole stroke at once for performance.
         const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth && !params.modulations?.opacity; 
 
         if (canBatchDraw) {
             ctx.beginPath();
             
-            // Generate Gradient
             const bounds = getStrokeBounds(stroke);
             const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180;
             const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
@@ -1373,7 +1361,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
                 const midpoint = params.strokeGradientMidpoint ?? 0.5;
                 params.gradient.colors.forEach((c, i) => {
-                    // Warping stops based on midpoint
                     const t = i / (params.gradient.colors.length - 1);
                     const offset = warpOffset(t, midpoint);
                     grad.addColorStop(offset, c);
@@ -1381,9 +1368,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 strokeStyle = grad;
             }
 
-            // Draw Path
             if (points.length > 0) {
-                 // Basic smoothing
                  if (params.pathRounding > 0 || params.smoothing > 0) {
                       ctx.moveTo(points[0].x, points[0].y);
                       for (let i = 0; i < points.length - 1; i++) {
@@ -1412,7 +1397,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ctx.shadowBlur = 0;
 
         } else {
-            // SEGMENTED DRAWING (For per-point modulation or path gradients)
             for (let i = 0; i < points.length - 1; i++) {
                 const p1 = points[i];
                 const p2 = points[i + 1];
@@ -1433,7 +1417,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     ctx.shadowBlur = 0;
                 }
 
-                // Apply per-segment blur
                 if (blur > 0) {
                     ctx.filter = `blur(${blur}px)`;
                 } else {
@@ -1442,18 +1425,16 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
                 if (params.gradient.enabled) {
                     if (params.strokeGradientType === 'path') {
-                        // Interpolate along path
                         const midpoint = params.strokeGradientMidpoint ?? 0.5;
                         const warpedT = warpOffset(progress, midpoint);
                         ctx.strokeStyle = interpolateColors(params.gradient.colors, warpedT);
                     } else {
-                         // Linear Gradient Logic (calculated per segment approximation)
                          const bounds = getStrokeBounds(stroke);
                          const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180;
                          const rx = p1.x - bounds.cx; const ry = p1.y - bounds.cy;
-                         const proj = rx * Math.cos(angleRad) + ry * Math.sin(angleRad); // distance from center along axis
+                         const proj = rx * Math.cos(angleRad) + ry * Math.sin(angleRad);
                          const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
-                         const t = 0.5 + (proj / (r * 2)); // approx 0-1
+                         const t = 0.5 + (proj / (r * 2));
                          const midpoint = params.strokeGradientMidpoint ?? 0.5;
                          const warpedT = warpOffset(Math.max(0, Math.min(1, t)), midpoint);
                          ctx.strokeStyle = interpolateColors(params.gradient.colors, warpedT);
@@ -1489,10 +1470,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             }
         }
         
-        // Reset Filter
         ctx.filter = 'none';
         
-        // DRAW POINTS (DEBUG / STYLE)
         if (params.drawPoints) {
             ctx.fillStyle = selectedStrokeIds.has(stroke.id) ? '#4f46e5' : 'rgba(0,0,0,0.2)';
             const ptSize = Math.max(2, params.strokeWidth / 3);
@@ -1504,11 +1483,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         }
       }
       
-      // Reset shadowBlur for the next stroke
       ctx.shadowBlur = 0;
     });
 
-    // Draw Cursor for Connect Tool
     if (globalForceTool === 'connect' && !pointerRef.current.isDown) {
         const closest = getClosestPoint(pointerRef.current.x, pointerRef.current.y, 40);
         if (closest) {
@@ -1525,7 +1502,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const animate = (time: number) => {
-    // ECO MODE LOGIC: Only redraw if playing OR there is interaction/update pending
     const needsUpdate = isPlaying || pointerRef.current.isDown || pointerRef.current.hasMoved || selectionBoxRef.current.active || needsRedrawRef.current;
     
     if (ecoMode && !needsUpdate) {
@@ -1541,7 +1517,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   useEffect(() => {
     reqRef.current = requestAnimationFrame(animate);
     return () => { if (reqRef.current) cancelAnimationFrame(reqRef.current); };
-  }, [isPlaying, ecoMode, interactionMode, globalForceTool, selectedStrokeIds]); // Added selectedStrokeIds to dep array to ensure redraw on selection change
+  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter]);
 
   return (
     <div 
