@@ -31,6 +31,7 @@ interface CanvasProps {
   onStrokeSelect: (strokeIds: string[] | string | null, params: SimulationParams | null, sound: SoundConfig | null, connectionIds: string[] | string | null, connectionParams: Connection | null) => void;
   onCanvasInteraction?: () => void;
   embedFit?: 'cover' | 'contain' | null;
+  embedZoom?: number; // NEW: Initial zoom factor for embed
 }
 
 export interface CanvasHandle {
@@ -66,7 +67,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   deleteAllLinksTrigger,
   onStrokeSelect,
   onCanvasInteraction,
-  embedFit
+  embedFit,
+  embedZoom = 1
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -79,6 +81,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const reqRef = useRef<number | null>(null);
   const needsRedrawRef = useRef<boolean>(true); // Force redraw flag
   
+  // NEW: Store calculated view transform for static embed view
+  const viewTransformRef = useRef({ scale: 1, x: 0, y: 0 });
+  const initialBoundsRef = useRef<{ minX: number, maxX: number, minY: number, maxY: number, width: number, height: number, cx: number, cy: number } | null>(null);
+
   const pointerRef = useRef({ 
       x: -1000, y: -1000, 
       isDown: false, 
@@ -119,7 +125,106 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   useEffect(() => {
       needsRedrawRef.current = true;
-  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit]);
+  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit, embedZoom]);
+
+  // Update View Transform when window resizes or zoom/fit changes
+  const updateFitTransform = useCallback(() => {
+      if (!embedFit || !canvasRef.current || !initialBoundsRef.current) {
+          viewTransformRef.current = { scale: 1, x: 0, y: 0 };
+          return;
+      }
+
+      const bounds = initialBoundsRef.current;
+      const canvasW = canvasRef.current.width;
+      const canvasH = canvasRef.current.height;
+      
+      // Safety check
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+
+      const contentW = bounds.width;
+      const contentH = bounds.height;
+      
+      const scaleX = canvasW / contentW;
+      const scaleY = canvasH / contentH;
+      
+      let scale = 1;
+      if (embedFit === 'contain') {
+          scale = Math.min(scaleX, scaleY);
+          // Limit max upscaling for contain to prevent excessive pixelation on tiny drawings
+          if (scale > 5) scale = 5; 
+      } else if (embedFit === 'cover') {
+          scale = Math.max(scaleX, scaleY);
+      }
+      
+      // Apply user configured zoom multiplier
+      scale *= embedZoom;
+
+      // Center the view
+      const tx = (canvasW / 2) - (bounds.cx * scale);
+      const ty = (canvasH / 2) - (bounds.cy * scale);
+
+      viewTransformRef.current = { scale, x: tx, y: ty };
+      needsRedrawRef.current = true;
+  }, [embedFit, embedZoom]);
+
+  const updateCanvasSize = useCallback(() => {
+    if (canvasRef.current && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      if (canvasRef.current.width !== rect.width || canvasRef.current.height !== rect.height) {
+        canvasRef.current.width = rect.width;
+        canvasRef.current.height = rect.height;
+        updateFitTransform(); // Recalculate view if canvas resizes
+        needsRedrawRef.current = true;
+      }
+    }
+  }, [updateFitTransform]);
+
+  useEffect(() => {
+    const observer = new ResizeObserver(() => { updateCanvasSize(); });
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [updateCanvasSize]);
+
+  // Recalculate on prop change
+  useEffect(() => {
+      updateFitTransform();
+  }, [updateFitTransform]);
+
+  // Calculate bounds based on INITIAL positions (baseX, baseY) for stability
+  const calculateInitialBounds = (strokes: Stroke[]) => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      
+      if (strokes.length === 0) return null;
+
+      for (const stroke of strokes) {
+          for (const p of stroke.points) {
+              // Use baseX/baseY if available to ignore current physics state
+              const x = p.baseX ?? p.x;
+              const y = p.baseY ?? p.y;
+              
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+          }
+      }
+      
+      if (!isFinite(minX)) return null;
+      
+      const padding = 20; // Internal padding for the bounds
+      minX -= padding;
+      maxX += padding;
+      minY -= padding;
+      maxY += padding;
+
+      return { 
+          minX, maxX, minY, maxY, 
+          width: maxX - minX, 
+          height: maxY - minY, 
+          cx: (minX + maxX) / 2, 
+          cy: (minY + maxY) / 2 
+      };
+  };
 
   useImperativeHandle(ref, () => ({
     exportData: () => ({
@@ -137,6 +242,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         connectionsRef.current = data.connections || [];
       }
       onStrokeSelect(null, null, null, null, null);
+      
+      // Calculate Bounds once on import
+      initialBoundsRef.current = calculateInitialBounds(strokesRef.current);
+      updateFitTransform(); // Apply transform immediately
+
       needsRedrawRef.current = true;
     },
     updateSelectedParams: (update) => {
@@ -189,7 +299,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     triggerRedraw: () => {
         needsRedrawRef.current = true;
     }
-  }), [selectedStrokeIds, selectedConnectionIds]);
+  }), [selectedStrokeIds, selectedConnectionIds, updateFitTransform]);
 
   const cloneStrokes = (strokes: Stroke[]): Stroke[] => {
     try { return JSON.parse(JSON.stringify(strokes)); } catch (e) { return []; }
@@ -218,29 +328,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     redoStackRef.current = [];
   };
 
-  const updateCanvasSize = useCallback(() => {
-    if (canvasRef.current && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      if (canvasRef.current.width !== rect.width || canvasRef.current.height !== rect.height) {
-        canvasRef.current.width = rect.width;
-        canvasRef.current.height = rect.height;
-        needsRedrawRef.current = true;
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const observer = new ResizeObserver(() => { updateCanvasSize(); });
-    if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [updateCanvasSize]);
-
   // Triggers
   useEffect(() => {
     if (clearTrigger > 0) {
       saveToHistory();
       strokesRef.current = [];
       connectionsRef.current = [];
+      initialBoundsRef.current = null;
+      viewTransformRef.current = { scale: 1, x: 0, y: 0 };
       onStrokeSelect(null, null, null, null, null);
       audioManager.stopAll();
       needsRedrawRef.current = true;
@@ -364,79 +459,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY, cx: (minX+maxX)/2, cy: (minY+maxY)/2 };
   };
 
-  const getGlobalBounds = () => {
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      const allStrokes = [...strokesRef.current, ...activeStrokesRef.current];
-      
-      if (allStrokes.length === 0) return null;
-
-      for (const stroke of allStrokes) {
-          for (const p of stroke.points) {
-              if (p.x < minX) minX = p.x;
-              if (p.x > maxX) maxX = p.x;
-              if (p.y < minY) minY = p.y;
-              if (p.y > maxY) maxY = p.y;
-          }
-      }
-      
-      if (!isFinite(minX)) return null;
-      
-      const padding = 20;
-      minX -= padding;
-      maxX += padding;
-      minY -= padding;
-      maxY += padding;
-
-      return { 
-          minX, maxX, minY, maxY, 
-          width: maxX - minX, 
-          height: maxY - minY, 
-          cx: (minX + maxX) / 2, 
-          cy: (minY + maxY) / 2 
-      };
-  };
-
-  // --- VIEWPORT TRANSFORM LOGIC ---
-  const getFitTransform = () => {
-      if (!embedFit || !canvasRef.current) return { scale: 1, x: 0, y: 0 };
-      
-      const bounds = getGlobalBounds();
-      if (!bounds) return { scale: 1, x: 0, y: 0 };
-
-      const canvasW = canvasRef.current.width;
-      const canvasH = canvasRef.current.height;
-      const contentW = bounds.width || 1;
-      const contentH = bounds.height || 1;
-      
-      const scaleX = canvasW / contentW;
-      const scaleY = canvasH / contentH;
-      
-      let scale = 1;
-      if (embedFit === 'contain') {
-          scale = Math.min(scaleX, scaleY);
-          // Limit max upscaling to avoid blurry rendering if content is tiny
-          if (scale > 5) scale = 5;
-      } else if (embedFit === 'cover') {
-          scale = Math.max(scaleX, scaleY);
-      }
-      
-      // We want to center the content.
-      // Target Center: canvasW/2, canvasH/2
-      // Source Center: bounds.cx, bounds.cy
-      // Transform logic: 
-      // 1. Translate to origin relative to content center: (P - bounds.cx)
-      // 2. Scale: (P - bounds.cx) * scale
-      // 3. Translate to canvas center: (P - bounds.cx) * scale + (canvasW/2)
-      //
-      // Effectively: P * scale + (canvasW/2 - bounds.cx * scale)
-      // So Translate X = canvasW/2 - bounds.cx * scale
-      
-      const tx = (canvasW / 2) - (bounds.cx * scale);
-      const ty = (canvasH / 2) - (bounds.cy * scale);
-
-      return { scale, x: tx, y: ty };
-  };
-
   const getPointerCoordinates = (e: React.PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return { x: 0, y: 0 };
@@ -446,11 +468,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
       if (!embedFit) return { x: rawX, y: rawY };
 
-      const { scale, x: tx, y: ty } = getFitTransform();
+      const { scale, x: tx, y: ty } = viewTransformRef.current;
       
       // Inverse Transform
-      // Screen = World * scale + translate
-      // World = (Screen - translate) / scale
       return {
           x: (rawX - tx) / scale,
           y: (rawY - ty) / scale
@@ -1085,7 +1105,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     ctx.save();
     
     // Apply camera transform to context
-    const { scale, x, y } = getFitTransform();
+    const { scale, x, y } = viewTransformRef.current;
     if (scale !== 1 || x !== 0 || y !== 0) {
         ctx.translate(x, y);
         ctx.scale(scale, scale);
@@ -1513,7 +1533,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   useEffect(() => {
     reqRef.current = requestAnimationFrame(animate);
     return () => { if (reqRef.current) cancelAnimationFrame(reqRef.current); };
-  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter, embedFit]); // added embedFit dep
+  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter, embedFit, embedZoom]); // added embedFit dep
 
   return (
     <div 

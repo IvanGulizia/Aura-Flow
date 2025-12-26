@@ -46,6 +46,7 @@ export default function App() {
   
   const [embedMode, setEmbedMode] = useState(false);
   const [embedFit, setEmbedFit] = useState<'cover' | 'contain' | null>(null);
+  const [embedZoom, setEmbedZoom] = useState<number>(1); // NEW: Initial Zoom Factor
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
@@ -100,12 +101,16 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const isEmbed = params.get('mode') === 'embed' || params.get('embed') === 'true';
     const fitMode = params.get('fit');
+    const zoomVal = parseFloat(params.get('zoom') || '1');
 
     if (isEmbed) {
       setEmbedMode(true);
       setGridConfig(prev => ({...prev, visible: false})); 
       if (fitMode === 'cover' || fitMode === 'contain') {
           setEmbedFit(fitMode);
+      }
+      if (!isNaN(zoomVal) && zoomVal > 0) {
+          setEmbedZoom(zoomVal);
       }
     }
 
@@ -604,6 +609,7 @@ export default function App() {
         globalToolConfig={globalToolConfig}
         ecoMode={ecoMode}
         embedFit={embedFit} // PASS EMBED FIT STATE
+        embedZoom={embedZoom} // PASS INITIAL ZOOM
         onStrokeSelect={handleSelection}
         clearTrigger={clearTrigger}
         deleteSelectedTrigger={deleteSelectedTrigger}

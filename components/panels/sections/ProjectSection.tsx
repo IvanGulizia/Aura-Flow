@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle, Maximize, Minimize } from 'lucide-react';
-import { SectionHeader } from '../../ui/Controls';
+import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle, Maximize, Minimize, ZoomIn } from 'lucide-react';
+import { SectionHeader, Slider } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
 
@@ -22,8 +22,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   const [jsonCopied, setJsonCopied] = useState(false);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
   
-  // NEW: Fit Mode state for Embed generation
   const [embedFit, setEmbedFit] = useState<'cover' | 'contain'>('contain');
+  const [embedZoom, setEmbedZoom] = useState<number>(1); // NEW: Local zoom state for generation
 
   const cleanGistUrl = (url: string): string => {
       let clean = url.trim();
@@ -39,7 +39,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       return clean;
   };
 
-  const generateEmbedCode = (inputUrl: string, fitMode: 'cover' | 'contain') => {
+  const generateEmbedCode = (inputUrl: string, fitMode: 'cover' | 'contain', zoom: number) => {
       const cleanedUrl = cleanGistUrl(inputUrl);
       setGistUrl(inputUrl); // Keep user input in field
       
@@ -52,8 +52,11 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       const baseUrl = window.location.origin + window.location.pathname;
       const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       
-      // Create the embed link with fit parameter
-      const fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}&fit=${fitMode}`;
+      // Create the embed link with fit parameter and zoom
+      let fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}&fit=${fitMode}`;
+      if (zoom !== 1) {
+          fullLink += `&zoom=${zoom}`;
+      }
       
       const code = `<iframe 
   src="${fullLink}" 
@@ -80,12 +83,12 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       setTimeout(() => setJsonCopied(false), 2000);
   };
 
-  // Re-generate code when fit mode changes if URL is present
+  // Re-generate code when params change
   useEffect(() => {
       if (gistUrl) {
-          generateEmbedCode(gistUrl, embedFit);
+          generateEmbedCode(gistUrl, embedFit, embedZoom);
       }
-  }, [embedFit]);
+  }, [embedFit, embedZoom]);
 
   return (
     <>
@@ -130,7 +133,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       <input 
                           type="text" 
                           value={gistUrl}
-                          onChange={(e) => generateEmbedCode(e.target.value, embedFit)}
+                          onChange={(e) => generateEmbedCode(e.target.value, embedFit, embedZoom)}
                           placeholder="https://gist.github.com/username/..."
                           className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 text-slate-700 placeholder:text-slate-300"
                       />
@@ -142,22 +145,33 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       )}
                   </div>
                   
-                  {/* NEW FIT MODE SELECTOR */}
-                  <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Fit Mode</label>
+                  {/* NEW FIT MODE SELECTOR & ZOOM SLIDER */}
+                  <div className="space-y-2">
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">View Settings</label>
                       <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                           <button 
                               onClick={() => setEmbedFit('contain')} 
                               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold transition-all ${embedFit === 'contain' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                           >
-                              <Minimize size={12} /> Adapt (Contain)
+                              <Minimize size={12} /> Adapt
                           </button>
                           <button 
                               onClick={() => setEmbedFit('cover')} 
                               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold transition-all ${embedFit === 'cover' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                           >
-                              <Maximize size={12} /> Crop (Cover)
+                              <Maximize size={12} /> Crop
                           </button>
+                      </div>
+                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
+                          <Slider 
+                              label="Initial Zoom" 
+                              value={embedZoom} 
+                              min={0.1} 
+                              max={3} 
+                              step={0.1} 
+                              onChange={setEmbedZoom} 
+                              className="mb-0" 
+                          />
                       </div>
                   </div>
 
