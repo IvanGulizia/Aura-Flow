@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle } from 'lucide-react';
+import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle, Maximize, Minimize } from 'lucide-react';
 import { SectionHeader } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
@@ -21,13 +21,12 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   const [copied, setCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
+  
+  // NEW: Fit Mode state for Embed generation
+  const [embedFit, setEmbedFit] = useState<'cover' | 'contain'>('contain');
 
   const cleanGistUrl = (url: string): string => {
       let clean = url.trim();
-      
-      // Smart fix for standard Gist URLs
-      // Transforms: https://gist.github.com/user/id
-      // To: https://gist.githubusercontent.com/user/id/raw
       if (clean.includes('gist.github.com') && !clean.includes('gist.githubusercontent.com')) {
           clean = clean.replace('gist.github.com', 'gist.githubusercontent.com');
           if (!clean.includes('/raw')) {
@@ -40,7 +39,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       return clean;
   };
 
-  const generateEmbedCode = (inputUrl: string) => {
+  const generateEmbedCode = (inputUrl: string, fitMode: 'cover' | 'contain') => {
       const cleanedUrl = cleanGistUrl(inputUrl);
       setGistUrl(inputUrl); // Keep user input in field
       
@@ -53,12 +52,9 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       const baseUrl = window.location.origin + window.location.pathname;
       const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       
-      // Create the embed link
-      const fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}`;
+      // Create the embed link with fit parameter
+      const fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}&fit=${fitMode}`;
       
-      // Generate the full Iframe tag
-      // Added styling to ensure it looks good in standard CMS (Wix/Wordpress)
-      // Added 'allow-same-origin' and 'allow-scripts' implicit in default iframe, but added explicit feature policies
       const code = `<iframe 
   src="${fullLink}" 
   width="100%" 
@@ -83,6 +79,13 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       setJsonCopied(true);
       setTimeout(() => setJsonCopied(false), 2000);
   };
+
+  // Re-generate code when fit mode changes if URL is present
+  useEffect(() => {
+      if (gistUrl) {
+          generateEmbedCode(gistUrl, embedFit);
+      }
+  }, [embedFit]);
 
   return (
     <>
@@ -127,7 +130,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       <input 
                           type="text" 
                           value={gistUrl}
-                          onChange={(e) => generateEmbedCode(e.target.value)}
+                          onChange={(e) => generateEmbedCode(e.target.value, embedFit)}
                           placeholder="https://gist.github.com/username/..."
                           className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 text-slate-700 placeholder:text-slate-300"
                       />
@@ -137,6 +140,25 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                               <span>{urlWarning}</span>
                           </div>
                       )}
+                  </div>
+                  
+                  {/* NEW FIT MODE SELECTOR */}
+                  <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Fit Mode</label>
+                      <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                          <button 
+                              onClick={() => setEmbedFit('contain')} 
+                              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold transition-all ${embedFit === 'contain' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                          >
+                              <Minimize size={12} /> Adapt (Contain)
+                          </button>
+                          <button 
+                              onClick={() => setEmbedFit('cover')} 
+                              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold transition-all ${embedFit === 'cover' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                          >
+                              <Maximize size={12} /> Crop (Cover)
+                          </button>
+                      </div>
                   </div>
 
                   {embedCode && (

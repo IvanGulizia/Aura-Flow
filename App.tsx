@@ -45,6 +45,7 @@ export default function App() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   
   const [embedMode, setEmbedMode] = useState(false);
+  const [embedFit, setEmbedFit] = useState<'cover' | 'contain' | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
@@ -98,9 +99,14 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const isEmbed = params.get('mode') === 'embed' || params.get('embed') === 'true';
+    const fitMode = params.get('fit');
+
     if (isEmbed) {
       setEmbedMode(true);
       setGridConfig(prev => ({...prev, visible: false})); 
+      if (fitMode === 'cover' || fitMode === 'contain') {
+          setEmbedFit(fitMode);
+      }
     }
 
     const dataUrl = params.get('url') || params.get('data');
@@ -597,6 +603,7 @@ export default function App() {
         globalForceTool={globalForceTool}
         globalToolConfig={globalToolConfig}
         ecoMode={ecoMode}
+        embedFit={embedFit} // PASS EMBED FIT STATE
         onStrokeSelect={handleSelection}
         clearTrigger={clearTrigger}
         deleteSelectedTrigger={deleteSelectedTrigger}

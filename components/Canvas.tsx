@@ -30,6 +30,7 @@ interface CanvasProps {
   deleteAllLinksTrigger: number;
   onStrokeSelect: (strokeIds: string[] | string | null, params: SimulationParams | null, sound: SoundConfig | null, connectionIds: string[] | string | null, connectionParams: Connection | null) => void;
   onCanvasInteraction?: () => void;
+  embedFit?: 'cover' | 'contain' | null; // NEW: Fit mode for embed
 }
 
 export interface CanvasHandle {
@@ -64,7 +65,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   resetPosTrigger,
   deleteAllLinksTrigger,
   onStrokeSelect,
-  onCanvasInteraction
+  onCanvasInteraction,
+  embedFit // Destructure new prop
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -117,7 +119,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   useEffect(() => {
       needsRedrawRef.current = true;
-  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter]);
+  }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit]);
 
   useImperativeHandle(ref, () => ({
     exportData: () => ({
@@ -362,6 +364,40 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY, cx: (minX+maxX)/2, cy: (minY+maxY)/2 };
   };
 
+  // NEW: Get global bounds of all strokes to center content in embed mode
+  const getGlobalBounds = () => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      const allStrokes = [...strokesRef.current, ...activeStrokesRef.current];
+      
+      if (allStrokes.length === 0) return null;
+
+      for (const stroke of allStrokes) {
+          for (const p of stroke.points) {
+              if (p.x < minX) minX = p.x;
+              if (p.x > maxX) maxX = p.x;
+              if (p.y < minY) minY = p.y;
+              if (p.y > maxY) maxY = p.y;
+          }
+      }
+      
+      if (!isFinite(minX)) return null;
+      
+      // Add padding for better visual
+      const padding = 20;
+      minX -= padding;
+      maxX += padding;
+      minY -= padding;
+      maxY += padding;
+
+      return { 
+          minX, maxX, minY, maxY, 
+          width: maxX - minX, 
+          height: maxY - minY, 
+          cx: (minX + maxX) / 2, 
+          cy: (minY + maxY) / 2 
+      };
+  };
+
   const getStrokeAtPosition = (x: number, y: number): Stroke | null => {
     for (let i = strokesRef.current.length - 1; i >= 0; i--) {
       const stroke = strokesRef.current[i];
@@ -434,6 +470,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   // --- INPUT HANDLING ---
   const handlePointerDown = (e: React.PointerEvent) => {
+    // Disable interactions if in embed mode to prevent coordinate mismatch issues due to transform
+    if (embedFit) return;
+
     if (onCanvasInteraction) onCanvasInteraction();
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -519,6 +558,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (embedFit) return;
+
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const rawX = e.clientX - rect.left;
@@ -573,6 +614,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    if (embedFit) return;
+
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch(err) {}
     pointerRef.current.isDown = false;
     
@@ -986,6 +1029,39 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // --- VIEWPORT TRANSFORMATION FOR EMBED ---
+    ctx.save();
+    
+    if (embedFit) {
+        const bounds = getGlobalBounds();
+        if (bounds && bounds.width > 0 && bounds.height > 0) {
+            const canvasW = canvas.width;
+            const canvasH = canvas.height;
+            const contentW = bounds.width;
+            const contentH = bounds.height;
+            
+            const scaleX = canvasW / contentW;
+            const scaleY = canvasH / contentH;
+            
+            let scale = 1;
+            if (embedFit === 'contain') {
+                scale = Math.min(scaleX, scaleY);
+                // Ensure we don't upscale too much if content is tiny, but generally we want to fit.
+            } else if (embedFit === 'cover') {
+                scale = Math.max(scaleX, scaleY);
+            }
+            
+            // Move to center of canvas
+            ctx.translate(canvasW / 2, canvasH / 2);
+            // Apply Scale
+            ctx.scale(scale, scale);
+            // Move back by center of content
+            ctx.translate(-bounds.cx, -bounds.cy);
+        }
+    }
+
     // Helper: Fillet (Rounded Corner) Path for ONE continuous path (Batch)
     const tracePath = (ctx: CanvasRenderingContext2D, points: Point[], rounding: number, closePath: boolean) => {
         if (points.length < 2) return;
@@ -1046,8 +1122,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             end: { x: p1.x + v2x * n2, y: p1.y + v2y * n2 }
         };
     };
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // GRID
     if (gridConfig.visible && gridConfig.enabled) {
@@ -1389,6 +1463,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             if (p) { ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2; ctx.stroke(); }
         }
     }
+    
+    // RESTORE CONTEXT AFTER EMBED TRANSFORM
+    ctx.restore();
   };
 
   const animate = (time: number) => {
@@ -1407,7 +1484,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   useEffect(() => {
     reqRef.current = requestAnimationFrame(animate);
     return () => { if (reqRef.current) cancelAnimationFrame(reqRef.current); };
-  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter]);
+  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter, embedFit]); // added embedFit dep
 
   return (
     <div 
