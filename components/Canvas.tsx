@@ -31,7 +31,7 @@ interface CanvasProps {
   onStrokeSelect: (strokeIds: string[] | string | null, params: SimulationParams | null, sound: SoundConfig | null, connectionIds: string[] | string | null, connectionParams: Connection | null) => void;
   onCanvasInteraction?: () => void;
   embedFit?: 'cover' | 'contain' | null;
-  embedZoom?: number; // NEW: Initial zoom factor for embed
+  embedZoom?: number; 
 }
 
 export interface CanvasHandle {
@@ -79,9 +79,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   const timeRef = useRef<number>(0);
   const reqRef = useRef<number | null>(null);
-  const needsRedrawRef = useRef<boolean>(true); // Force redraw flag
+  const needsRedrawRef = useRef<boolean>(true); 
   
-  // NEW: Store calculated view transform for static embed view
   const viewTransformRef = useRef({ scale: 1, x: 0, y: 0 });
   const initialBoundsRef = useRef<{ minX: number, maxX: number, minY: number, maxY: number, width: number, height: number, cx: number, cy: number } | null>(null);
 
@@ -106,7 +105,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const redoStackRef = useRef<{strokes: Stroke[], connections: Connection[]}[]>([]);
   const preDrawSnapshotRef = useRef<{strokes: Stroke[], connections: Connection[]} | null>(null);
 
-  // Capture selection index snapshot on selection change
   useEffect(() => {
     if (selectedStrokeIds.size > 0) {
         let i = 0;
@@ -127,7 +125,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       needsRedrawRef.current = true;
   }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit, embedZoom]);
 
-  // Update View Transform when window resizes or zoom/fit changes
   const updateFitTransform = useCallback(() => {
       if (!embedFit || !canvasRef.current || !initialBoundsRef.current) {
           viewTransformRef.current = { scale: 1, x: 0, y: 0 };
@@ -138,7 +135,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       const canvasW = canvasRef.current.width;
       const canvasH = canvasRef.current.height;
       
-      // Safety check
       if (bounds.width <= 0 || bounds.height <= 0) return;
 
       const contentW = bounds.width;
@@ -150,16 +146,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       let scale = 1;
       if (embedFit === 'contain') {
           scale = Math.min(scaleX, scaleY);
-          // Limit max upscaling for contain to prevent excessive pixelation on tiny drawings
           if (scale > 5) scale = 5; 
       } else if (embedFit === 'cover') {
           scale = Math.max(scaleX, scaleY);
       }
       
-      // Apply user configured zoom multiplier
       scale *= embedZoom;
 
-      // Center the view
       const tx = (canvasW / 2) - (bounds.cx * scale);
       const ty = (canvasH / 2) - (bounds.cy * scale);
 
@@ -173,7 +166,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       if (canvasRef.current.width !== rect.width || canvasRef.current.height !== rect.height) {
         canvasRef.current.width = rect.width;
         canvasRef.current.height = rect.height;
-        updateFitTransform(); // Recalculate view if canvas resizes
+        updateFitTransform(); 
         needsRedrawRef.current = true;
       }
     }
@@ -185,45 +178,30 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     return () => observer.disconnect();
   }, [updateCanvasSize]);
 
-  // Recalculate on prop change
   useEffect(() => {
       updateFitTransform();
   }, [updateFitTransform]);
 
-  // Calculate bounds based on INITIAL positions (baseX, baseY) for stability
   const calculateInitialBounds = (strokes: Stroke[]) => {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      
       if (strokes.length === 0) return null;
-
       for (const stroke of strokes) {
           for (const p of stroke.points) {
-              // Use baseX/baseY if available to ignore current physics state
               const x = p.baseX ?? p.x;
               const y = p.baseY ?? p.y;
-              
               if (x < minX) minX = x;
               if (x > maxX) maxX = x;
               if (y < minY) minY = y;
               if (y > maxY) maxY = y;
           }
       }
-      
       if (!isFinite(minX)) return null;
-      
-      const padding = 20; // Internal padding for the bounds
+      const padding = 20;
       minX -= padding;
       maxX += padding;
       minY -= padding;
       maxY += padding;
-
-      return { 
-          minX, maxX, minY, maxY, 
-          width: maxX - minX, 
-          height: maxY - minY, 
-          cx: (minX + maxX) / 2, 
-          cy: (minY + maxY) / 2 
-      };
+      return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
   };
 
   useImperativeHandle(ref, () => ({
@@ -242,16 +220,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         connectionsRef.current = data.connections || [];
       }
       onStrokeSelect(null, null, null, null, null);
-      
-      // Calculate Bounds once on import
       initialBoundsRef.current = calculateInitialBounds(strokesRef.current);
-      updateFitTransform(); // Apply transform immediately
-
+      updateFitTransform(); 
       needsRedrawRef.current = true;
     },
     updateSelectedParams: (update) => {
         if (selectedStrokeIds.size === 0) return;
-        
         strokesRef.current.forEach(s => {
             if (selectedStrokeIds.has(s.id)) {
                 if ('key' in update) {
@@ -328,7 +302,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     redoStackRef.current = [];
   };
 
-  // Triggers
   useEffect(() => {
     if (clearTrigger > 0) {
       saveToHistory();
@@ -409,8 +382,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
   }, [redoTrigger]);
 
-  // --- HELPER FUNCTIONS ---
-
   const snapToGrid = (x: number, y: number): { x: number, y: number } => {
     if (!gridConfig.enabled || !gridConfig.snap || !canvasRef.current) return { x, y };
     const cx = canvasRef.current.width / 2;
@@ -470,14 +441,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
       const { scale, x: tx, y: ty } = viewTransformRef.current;
       
-      // Inverse Transform
       return {
           x: (rawX - tx) / scale,
           y: (rawY - ty) / scale
       };
   };
 
-  // Helper to add point logic, reused for coalesced events
   const addPointToActiveStrokes = (x: number, y: number, pressure: number) => {
       activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
       
@@ -488,11 +457,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         const target = symPoints[idx];
         const lastP = stroke.points[stroke.points.length - 1];
         
-        // Simple distance check to avoid piling up points
-        if (((target.x - lastP.x) ** 2 + (target.y - lastP.y) ** 2) >= stroke.params.segmentation ** 2) {
+        // Force add if only 1 point exists (to allow small strokes/taps), otherwise check distance
+        const isStart = stroke.points.length < 2;
+        if (isStart || ((target.x - lastP.x) ** 2 + (target.y - lastP.y) ** 2) >= stroke.params.segmentation ** 2) {
              stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
              
-             // Update center
              let cx = 0, cy = 0;
              stroke.points.forEach(p => { cx += p.x; cy += p.y; });
              stroke.center.x = cx / stroke.points.length;
@@ -576,13 +545,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   // --- INPUT HANDLING ---
   const handlePointerDown = (e: React.PointerEvent) => {
-    // Prevent default browser behavior (scrolling/zooming)
     e.preventDefault(); 
     
     if (onCanvasInteraction) onCanvasInteraction();
     e.currentTarget.setPointerCapture(e.pointerId);
     
-    // Use mapped coordinates
     const { x: rawX, y: rawY } = getPointerCoordinates(e);
     const { x, y } = snapToGrid(rawX, rawY);
 
@@ -607,7 +574,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
              const newSet = new Set(selectedStrokeIds);
              let clickedId = hitStroke.id;
              if (newSet.has(clickedId)) newSet.delete(clickedId); else newSet.add(clickedId);
-             
              const arr = Array.from(newSet);
              const primaryStroke = arr.length > 0 ? strokesRef.current.find(s => s.id === arr[arr.length-1]) : null;
              const conns = Array.from(selectedConnectionIds);
@@ -643,7 +609,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     const baseId = Date.now().toString();
     const effectiveSeamless = gridConfig.enabled ? false : brushParams.seamlessPath;
     
-    // Initial pressure from pen
     const initialPressure = e.pressure !== 0.5 && e.pressure > 0 ? e.pressure : 0.5;
 
     symPoints.forEach((p, idx) => {
@@ -663,13 +628,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
        newStrokes.push(newStroke);
     });
     activeStrokesRef.current = newStrokes;
+    
+    // Immediately display the dot on tap
+    needsRedrawRef.current = true;
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    // Prevent scrolling on touch devices
     e.preventDefault();
 
-    // Use mapped coordinates
     const { x: rawX, y: rawY } = getPointerCoordinates(e);
     const { x, y } = (pointerRef.current.isDown && interactionMode === 'draw') ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
 
@@ -690,64 +656,48 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     if (globalForceTool !== 'none' || interactionMode === 'select') return;
 
     if (pointerRef.current.isDown && activeStrokesRef.current.length > 0) {
+      // Lower threshold to 0.5 to allow slower/finer movement capture on iPad
       const distSq = (x - pointerRef.current.lastX) ** 2 + (y - pointerRef.current.lastY) ** 2;
-      if (distSq > 4) pointerRef.current.hasMoved = true;
+      if (distSq > 0.5) pointerRef.current.hasMoved = true;
 
-      if (pointerRef.current.hasMoved) {
-          // --- COALESCED EVENTS SUPPORT (High-Frequency Drawing for iPad Pro / Stylus) ---
-          const events = e.nativeEvent.getCoalescedEvents ? e.nativeEvent.getCoalescedEvents() : [e.nativeEvent];
-          
-          if (events.length > 0) {
-              for (const ev of events) {
-                  // Re-map coordinates for each coalesced event
-                  // Note: We need manual mapping here because getPointerCoordinates uses the React SyntheticEvent or main event
-                  const rect = canvasRef.current?.getBoundingClientRect();
-                  if (!rect) continue;
-                  
-                  const evRawX = ev.clientX - rect.left;
-                  const evRawY = ev.clientY - rect.top;
-                  
-                  let evX = evRawX;
-                  let evY = evRawY;
+      // Always process if we are drawing, coalesced events might trigger even if main event shows little movement
+      const events = e.nativeEvent.getCoalescedEvents ? e.nativeEvent.getCoalescedEvents() : [e.nativeEvent];
+      
+      if (events.length > 0) {
+          for (const ev of events) {
+              const rect = canvasRef.current?.getBoundingClientRect();
+              if (!rect) continue;
+              
+              const evRawX = ev.clientX - rect.left;
+              const evRawY = ev.clientY - rect.top;
+              
+              let evX = evRawX;
+              let evY = evRawY;
 
-                  // Apply Embed Transform if active
-                  if (embedFit) {
-                      const { scale, x: tx, y: ty } = viewTransformRef.current;
-                      evX = (evRawX - tx) / scale;
-                      evY = (evRawY - ty) / scale;
-                  }
-
-                  // Apply Grid Snap
-                  if (interactionMode === 'draw' && gridConfig.enabled && gridConfig.snap) {
-                      const snapped = snapToGrid(evX, evY);
-                      evX = snapped.x;
-                      evY = snapped.y;
-                  }
-
-                  // Calculate Pressure
-                  let pressure = 0.5;
-                  if (ev.pressure !== 0.5 && ev.pressure > 0) {
-                      // Use native pressure if available and not default "0.5"
-                      pressure = ev.pressure;
-                  } else {
-                      // Fallback to speed-based pressure
-                      const dist = Math.hypot(evX - pointerRef.current.lastX, evY - pointerRef.current.lastY);
-                      pressure = Math.min(1, Math.max(0.01, dist / 30));
-                  }
-
-                  addPointToActiveStrokes(evX, evY, pressure);
-                  
-                  // Update last known position for next coalesced point calculation
-                  pointerRef.current.lastX = evX;
-                  pointerRef.current.lastY = evY;
+              if (embedFit) {
+                  const { scale, x: tx, y: ty } = viewTransformRef.current;
+                  evX = (evRawX - tx) / scale;
+                  evY = (evRawY - ty) / scale;
               }
-          } else {
-              // Fallback for browsers without coalesced events
-              const speed = Math.hypot(x - pointerRef.current.lastX, y - pointerRef.current.lastY);
-              const pressure = e.pressure !== 0.5 && e.pressure > 0 ? e.pressure : Math.min(1, Math.max(0.01, speed / 30)); 
-              addPointToActiveStrokes(x, y, pressure);
-              pointerRef.current.lastX = x;
-              pointerRef.current.lastY = y;
+
+              if (interactionMode === 'draw' && gridConfig.enabled && gridConfig.snap) {
+                  const snapped = snapToGrid(evX, evY);
+                  evX = snapped.x;
+                  evY = snapped.y;
+              }
+
+              let pressure = 0.5;
+              if (ev.pressure !== 0.5 && ev.pressure > 0) {
+                  pressure = ev.pressure;
+              } else {
+                  const dist = Math.hypot(evX - pointerRef.current.lastX, evY - pointerRef.current.lastY);
+                  pressure = Math.min(1, Math.max(0.01, dist / 30));
+              }
+
+              addPointToActiveStrokes(evX, evY, pressure);
+              
+              pointerRef.current.lastX = evX;
+              pointerRef.current.lastY = evY;
           }
       }
     }
@@ -757,14 +707,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch(err) {}
     pointerRef.current.isDown = false;
     
-    // Mapped coordinates required for selection box logic
     const { x: rawX, y: rawY } = getPointerCoordinates(e);
 
     if (selectionBoxRef.current.active) {
         const sx = selectionBoxRef.current.startX;
         const sy = selectionBoxRef.current.startY;
-        // Use current pointer pos which is updated via Move, or calculate here if needed.
-        // selectionBoxRef.current.currentX/Y are in World Space already from handlePointerMove.
         const w = selectionBoxRef.current.currentX - sx;
         const h = selectionBoxRef.current.currentY - sy;
         
@@ -789,7 +736,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
 
     if (globalForceTool === 'connect' && pointerRef.current.connectionStart) {
-        // Use rawX/rawY from mapped input
         const closest = getClosestPoint(rawX, rawY, 40);
         if (closest && !(closest.strokeId === pointerRef.current.connectionStart.strokeId && closest.pointIndex === pointerRef.current.connectionStart.pointIndex)) {
                 connectionsRef.current.push({
@@ -817,7 +763,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
     if (globalForceTool !== 'none' || interactionMode === 'select') return;
     
-    if (pointerRef.current.hasMoved && activeStrokesRef.current.length > 0) {
+    // Always commit strokes, even if "hasMoved" was small (tap to draw dot)
+    if (activeStrokesRef.current.length > 0) {
+        // Ensure they are in the main array
+        activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
+
         activeStrokesRef.current.forEach(s => {
             s.originCenter = { ...s.center };
             if (s.params.closePath && s.points.length > 2) {
@@ -839,7 +789,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     needsRedrawRef.current = true;
   };
 
-  // --- MODULATION LOGIC ---
   const resolveParam = (
     baseValue: number, 
     key: keyof SimulationParams, 
@@ -1087,7 +1036,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       if (len === 0) continue;
       for (const p of stroke.points) { cx += p.x; cy += p.y; totalSpeed += Math.hypot(p.vx, p.vy); }
       stroke.center.x = cx / len; stroke.center.y = cy / len;
-      stroke.velocity = { x: 0, y: 0 }; // Placeholder for swarm average
+      stroke.velocity = { x: 0, y: 0 }; 
       
       const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000;
       const influenceRadius = stroke.params.mouseInfluenceRadius || 150;
@@ -1154,7 +1103,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 const angle = Math.atan2(p.y - p.baseY, p.x - p.baseX);
                 p.x = p.baseX + Math.cos(angle) * stroke.params.maxDisplacement;
                 p.y = p.baseY + Math.sin(angle) * stroke.params.maxDisplacement;
-                // Kill velocity against the wall
                 p.vx *= 0.5; p.vy *= 0.5;
             }
         }
@@ -1170,17 +1118,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // --- VIEWPORT TRANSFORMATION FOR EMBED ---
     ctx.save();
     
-    // Apply camera transform to context
     const { scale, x, y } = viewTransformRef.current;
     if (scale !== 1 || x !== 0 || y !== 0) {
         ctx.translate(x, y);
         ctx.scale(scale, scale);
     }
 
-    // Helper: Fillet (Rounded Corner) Path for ONE continuous path (Batch)
     const tracePath = (ctx: CanvasRenderingContext2D, points: Point[], rounding: number, closePath: boolean) => {
         if (points.length < 2) return;
         ctx.beginPath();
@@ -1189,7 +1134,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         if (rounding <= 0.01) {
             for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
         } else {
-             // Corner cutting algorithm (Fillet)
              for (let i = 1; i < points.length - 1; i++) {
                 const p0 = points[i - 1];
                 const p1 = points[i];
@@ -1225,7 +1169,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         if (closePath) ctx.closePath();
     };
 
-    // Helper: Get Corner Geometry for Segmented Draw
     const getCorner = (p0: Point, p1: Point, p2: Point, rounding: number) => {
         const v1x = p0.x - p1.x; const v1y = p0.y - p1.y;
         const v2x = p2.x - p1.x; const v2y = p2.y - p1.y;
@@ -1241,7 +1184,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         };
     };
 
-    // GRID
     if (gridConfig.visible && gridConfig.enabled) {
        ctx.fillStyle = hexToRgba(gridConfig.color, gridConfig.opacity);
        const cx = canvas.width / 2;
@@ -1363,13 +1305,22 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
 
     strokesToDraw.forEach(stroke => {
+      // Draw Dot if single point
+      if (stroke.points.length === 1) {
+          const p = stroke.points[0];
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, stroke.params.strokeWidth / 2, 0, Math.PI * 2);
+          ctx.fillStyle = stroke.params.color;
+          ctx.fill();
+          return;
+      }
+      
       if (stroke.points.length < 2) return;
       const { params, points, center } = stroke;
       
       const centerDist = Math.hypot(pointerRef.current.x - center.x, pointerRef.current.y - center.y);
       const influenceRadius = params.mouseInfluenceRadius || 150;
 
-      // FILL (Always Continuous Path to avoid artifacts)
       if (params.fill.enabled) {
           tracePath(ctx, points, params.pathRounding, params.closePath);
 
@@ -1408,7 +1359,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           ctx.globalAlpha = 1;
       }
 
-      // STROKE
       if (params.opacity > 0 && params.strokeWidth > 0) {
         ctx.lineCap = params.lineCap || 'round';
         ctx.lineJoin = 'round';
@@ -1423,7 +1373,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth && !params.modulations?.opacity && !params.modulations?.hueShift; 
 
         if (canBatchDraw) {
-            // BATCH DRAW (Optimized, Single Path)
             const bounds = getStrokeBounds(stroke);
             const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180;
             const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
@@ -1434,7 +1383,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
             let strokeStyle: string | CanvasGradient = params.color;
             
-            // APPLY GLOBAL HUE SHIFT FOR BATCH DRAW
             if (params.hueShift !== 0 || (params.audioToColor && isMicEnabled)) {
                  let shift = params.hueShift;
                  if (params.audioToColor && isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
@@ -1466,9 +1414,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ctx.shadowBlur = 0;
 
         } else {
-            // SEGMENTED DRAW (Modulated, Point-by-Point)
-            
-            // Pre-calc corners if needed for smooth segmented joints
             const corners: any[] = [];
             if (params.pathRounding > 0) {
                 for (let i = 1; i < points.length - 1; i++) {
@@ -1479,9 +1424,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             let lastX = points[0].x;
             let lastY = points[0].y;
 
-            // Iterate points to draw segments
-            // i is the target point of the segment. 
-            // Segment i goes from (CornerEnd of i-1) to (CornerEnd of i) roughly.
             for (let i = 1; i < points.length; i++) {
                 const p1 = points[i];
                 const progress = i / (points.length - 1);
@@ -1497,7 +1439,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 if (params.glowStrength > 0) { ctx.shadowColor = params.color; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
                 if (blur > 0) { ctx.filter = `blur(${blur}px)`; } else { ctx.filter = 'none'; }
 
-                // Determine Color
                 if (params.gradient.enabled) {
                     if (params.strokeGradientType === 'path') {
                         const midpoint = params.strokeGradientMidpoint ?? 0.5;
@@ -1518,7 +1459,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && isMicEnabled)) {
                          let shift = params.hueShift;
-                         // Per point modulation overrides global
                          if (params.modulations?.hueShift) {
                              shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i);
                          } else if (params.hueShift !== 0) {
@@ -1533,7 +1473,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     ctx.strokeStyle = c;
                 }
 
-                // Draw Segment with potential Rounding
                 ctx.beginPath();
                 ctx.moveTo(lastX, lastY);
 
@@ -1545,13 +1484,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                         lastX = c.end.x;
                         lastY = c.end.y;
                     } else {
-                        // Fallback if corner invalid
                         ctx.lineTo(points[i].x, points[i].y);
                         lastX = points[i].x;
                         lastY = points[i].y;
                     }
                 } else {
-                    // Last point or no rounding
                     ctx.lineTo(points[i].x, points[i].y);
                     lastX = points[i].x;
                     lastY = points[i].y;
@@ -1582,7 +1519,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         }
     }
     
-    // RESTORE CONTEXT AFTER EMBED TRANSFORM
     ctx.restore();
   };
 
@@ -1602,12 +1538,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   useEffect(() => {
     reqRef.current = requestAnimationFrame(animate);
     return () => { if (reqRef.current) cancelAnimationFrame(reqRef.current); };
-  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter, embedFit, embedZoom]); // added embedFit dep
+  }, [isPlaying, ecoMode, interactionMode, globalForceTool, globalToolConfig, gridConfig, symmetryConfig, brushParams, selectedStrokeIds, selectedConnectionIds, selectionFilter, embedFit, embedZoom]);
 
   return (
     <div 
         ref={containerRef} 
         className={`w-full h-full touch-none ${interactionMode === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
+        style={{ touchAction: 'none' }} // Explicit inline style critical for iOS
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
