@@ -4,6 +4,7 @@ import { Stroke, SimulationParams, ModulationConfig, SoundConfig, GlobalForceTyp
 import { audioManager } from '../services/audioService';
 import { getShiftedColor, interpolateColors, hexToRgba } from '../utils/colorUtils';
 import { cubicBezier, warpOffset, getPseudoRandom, applyEasing, distanceToLineSegment } from '../utils/mathUtils';
+import { DEFAULT_PARAMS } from '../constants/defaults';
 
 interface CanvasProps {
   brushParams: SimulationParams;
@@ -17,7 +18,7 @@ interface CanvasProps {
   isSoundEngineEnabled: boolean; 
   isMicEnabled: boolean; 
   interactionMode: 'draw' | 'select';
-  selectionFilter: 'all' | 'links'; // NEW PROP
+  selectionFilter: 'all' | 'links';
   globalForceTool: GlobalForceType;
   globalToolConfig: GlobalToolConfig;
   ecoMode: boolean;
@@ -102,7 +103,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     if (selectedStrokeIds.size > 0) {
         let i = 0;
         const total = selectedStrokeIds.size;
-        // Iterate in iteration order of the Set (insertion order)
         selectedStrokeIds.forEach(id => {
             const s = strokesRef.current.find(st => st.id === id);
             if (s) {
@@ -115,7 +115,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     needsRedrawRef.current = true;
   }, [selectedStrokeIds]);
 
-  // Force redraw on visual config changes (sets flag so ecoMode doesn't block it)
   useEffect(() => {
       needsRedrawRef.current = true;
   }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter]);
@@ -147,14 +146,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                      if (update.modulation) {
                          if (!s.params.modulations) s.params.modulations = {};
                          // @ts-ignore
-                         if (update.value === undefined) {
-                             // Explicitly remove the modulation
-                             // @ts-ignore
-                             delete s.params.modulations[update.key];
-                         } else {
-                             // @ts-ignore
-                             s.params.modulations[update.key] = update.value;
-                         }
+                         if (update.value === undefined) delete s.params.modulations[update.key];
+                         // @ts-ignore
+                         else s.params.modulations[update.key] = update.value;
                      } else {
                          // @ts-ignore
                          s.params[update.key] = update.value;
@@ -196,12 +190,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   }), [selectedStrokeIds, selectedConnectionIds]);
 
   const cloneStrokes = (strokes: Stroke[]): Stroke[] => {
-    try {
-      return JSON.parse(JSON.stringify(strokes));
-    } catch (e) {
-      console.error("Clone failed", e);
-      return [];
-    }
+    try { return JSON.parse(JSON.stringify(strokes)); } catch (e) { return []; }
   };
   
   const hydrateStrokes = (data: Stroke[]): Stroke[] => {
@@ -209,35 +198,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ...s,
             originCenter: s.originCenter || { ...s.center },
             params: { 
+                ...DEFAULT_PARAMS,
                 ...s.params, 
-                maxDisplacement: s.params.maxDisplacement || 0,
-                strokeGradientType: s.params.strokeGradientType || 'linear',
-                hueShift: s.params.hueShift || 0, 
-                drawPoints: s.params.drawPoints || false,
-                smoothModulation: s.params.smoothModulation || false,
-                closePath: s.params.closePath || false,
-                closePathRadius: s.params.closePathRadius || 50,
-                strokeGradientMidpoint: s.params.strokeGradientMidpoint ?? 0.5,
-                lineCap: s.params.lineCap || 'round',
-                fill: {
-                    enabled: false, 
-                    type: 'solid', 
-                    syncWithStroke: false, 
-                    blendMode: 'source-over', 
-                    colorSource: 'stroke', 
-                    customColor: '#574dff', 
-                    opacity: 0.2, 
-                    rule: 'nonzero',
-                    blur: 0,
-                    glow: false,
-                    ...(s.params.fill || {}),
-                    gradient: s.params.fill?.gradient || { enabled: false, colors: ['#000000', '#ffffff'] },
-                },
-                gradient: s.params.gradient || { enabled: false, colors: ['#f472b6', '#60a5fa'] },
-                pathRounding: s.params.pathRounding || 0,
-                strokeGradientAngle: s.params.strokeGradientAngle || 45,
-                fillGradientAngle: s.params.fillGradientAngle || 0,
-                swarmCursorInfluence: s.params.swarmCursorInfluence || 0
+                fill: { ...DEFAULT_PARAMS.fill, ...(s.params.fill || {}) },
+                gradient: { ...DEFAULT_PARAMS.gradient, ...(s.params.gradient || {}) },
             }
       }));
   };
@@ -320,20 +284,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         });
         strokesRef.current = previousState.strokes;
         connectionsRef.current = previousState.connections;
-        
         const existingStrokeIds = new Set(strokesRef.current.map(s => s.id));
         const newStrokeSelection = new Set([...selectedStrokeIds].filter(id => existingStrokeIds.has(id)));
-        
         const existingConnIds = new Set(connectionsRef.current.map(c => c.id));
         const newConnSelection = new Set([...selectedConnectionIds].filter(id => existingConnIds.has(id)));
-
-        const strokeList = Array.from(newStrokeSelection);
-        const firstStroke = strokeList.length > 0 ? strokesRef.current.find(s => s.id === strokeList[0]) : null;
         
+        const strokeList = Array.from(newStrokeSelection);
         const connList = Array.from(newConnSelection);
-        const firstConn = connList.length > 0 ? connectionsRef.current.find(c => c.id === connList[0]) : null;
-
-        onStrokeSelect(strokeList.length ? strokeList : null, firstStroke?.params || null, firstStroke?.sound || null, connList.length ? connList : null, firstConn || null);
+        onStrokeSelect(strokeList.length ? strokeList : null, null, null, connList.length ? connList : null, null);
         needsRedrawRef.current = true;
       }
     }
@@ -499,72 +457,41 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     if (globalForceTool !== 'none') return;
     
     if (interactionMode === 'select') {
-      // LINK SELECTION FILTER
       const hitStroke = selectionFilter === 'all' ? getStrokeAtPosition(rawX, rawY) : null;
-      
       if (hitStroke) {
           if (e.shiftKey) {
              const newSet = new Set(selectedStrokeIds);
              let clickedId = hitStroke.id;
-
-             if (newSet.has(clickedId)) {
-                 newSet.delete(clickedId);
-                 clickedId = ''; 
-             } else {
-                 newSet.add(clickedId);
-             }
+             if (newSet.has(clickedId)) newSet.delete(clickedId); else newSet.add(clickedId);
              
              const arr = Array.from(newSet);
-             if (clickedId && arr.includes(clickedId)) {
-                 const idx = arr.indexOf(clickedId);
-                 if (idx > -1) {
-                     arr.splice(idx, 1);
-                     arr.push(clickedId);
-                 }
-             }
-
              const primaryStroke = arr.length > 0 ? strokesRef.current.find(s => s.id === arr[arr.length-1]) : null;
              const conns = Array.from(selectedConnectionIds);
              const primaryConn = conns.length > 0 ? connectionsRef.current.find(c => c.id === conns[0]) : null;
-             
              onStrokeSelect(arr, primaryStroke?.params || null, primaryStroke?.sound || null, conns, primaryConn || null);
           } else {
-             if (!selectedStrokeIds.has(hitStroke.id)) {
-                 onStrokeSelect(hitStroke.id, hitStroke.params, hitStroke.sound, null, null);
-             }
+             if (!selectedStrokeIds.has(hitStroke.id)) onStrokeSelect(hitStroke.id, hitStroke.params, hitStroke.sound, null, null);
           }
       } else {
-          // If in "Links Only" mode or if no stroke hit
           const hitConn = getConnectionAtPosition(rawX, rawY);
           if (hitConn) {
               if (e.shiftKey) {
                   const newSet = new Set(selectedConnectionIds);
-                  if (newSet.has(hitConn.id)) newSet.delete(hitConn.id);
-                  else newSet.add(hitConn.id);
-                  
+                  if (newSet.has(hitConn.id)) newSet.delete(hitConn.id); else newSet.add(hitConn.id);
                   const primaryConn = newSet.size > 0 ? connectionsRef.current.find(c => c.id === Array.from(newSet).pop()) : null;
-                  const strokes = Array.from(selectedStrokeIds);
-                  const primaryStroke = strokes.length > 0 ? strokesRef.current.find(s => s.id === strokes[0]) : null;
-                  
-                  onStrokeSelect(strokes, primaryStroke?.params || null, primaryStroke?.sound || null, Array.from(newSet), primaryConn || null);
+                  onStrokeSelect(Array.from(selectedStrokeIds), null, null, Array.from(newSet), primaryConn || null);
               } else {
                   onStrokeSelect(null, null, null, hitConn.id, hitConn);
               }
           } else {
-              if (!e.shiftKey) {
-                  onStrokeSelect(null, null, null, null, null);
-              }
-              // Allow selection box even in Link only mode? 
-              // Usually selection box selects strokes. We'll keep it active but it will filter hits in pointerUp
+              if (!e.shiftKey) onStrokeSelect(null, null, null, null, null);
               selectionBoxRef.current = { active: true, startX: rawX, startY: rawY, currentX: rawX, currentY: rawY };
           }
       }
       return;
     }
 
-    // DRAW MODE
     if (selectedStrokeId) onStrokeSelect(null, null, null, null, null);
-
     preDrawSnapshotRef.current = { strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) };
     
     const symPoints = getSymmetryPoints(x, y);
@@ -646,11 +573,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch(err) {
-        // Pointer capture might have been lost or id is invalid - ignore
-    }
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch(err) {}
     pointerRef.current.isDown = false;
     
     if (selectionBoxRef.current.active) {
@@ -660,36 +583,22 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         const h = selectionBoxRef.current.currentY - sy;
         
         if (Math.abs(w) > 5 || Math.abs(h) > 5) {
-            // Apply filter to selection box too
             const hits = selectionFilter === 'all' ? strokesIntersectRect(sx, sy, w, h) : [];
-            
             if (hits.length > 0) {
                 const newIds = hits.map(s => s.id);
                 const currentIds = e.shiftKey ? Array.from(selectedStrokeIds) : [];
                 const merged = Array.from(new Set([...currentIds, ...newIds]));
                 const last = merged[merged.length - 1];
                 const primary = strokesRef.current.find(s => s.id === last);
-                const conns = Array.from(selectedConnectionIds);
-                const primaryConn = conns.length > 0 ? connectionsRef.current.find(c => c.id === conns[0]) : null;
-
-                onStrokeSelect(merged, primary?.params || null, primary?.sound || null, conns, primaryConn || null);
-            } else {
-                // If box selected nothing (or strokes ignored), maybe just deselect
-                if (!e.shiftKey) {
-                    onStrokeSelect(null, null, null, null, null);
-                }
+                onStrokeSelect(merged, primary?.params || null, primary?.sound || null, Array.from(selectedConnectionIds), null);
+            } else if (!e.shiftKey) {
+                onStrokeSelect(null, null, null, null, null);
             }
-        } else {
-             if (!e.shiftKey) {
-                 onStrokeSelect(null, null, null, null, null);
-             }
+        } else if (!e.shiftKey) {
+             onStrokeSelect(null, null, null, null, null);
         }
-        
         selectionBoxRef.current.active = false;
-        
-        // IMMEDIATE DRAW to clear selection box artifact without waiting for loop
         draw();
-        
         return;
     }
 
@@ -734,16 +643,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 const last = s.points[s.points.length - 1];
                 const dist = Math.hypot(first.x - last.x, first.y - last.y);
                 if (dist < (s.params.closePathRadius || 50)) {
-                    s.points.push({ 
-                        x: first.x, y: first.y, 
-                        baseX: first.baseX, baseY: first.baseY, 
-                        vx: 0, vy: 0, 
-                        pressure: last.pressure 
-                    });
+                    s.points.push({ x: first.x, y: first.y, baseX: first.baseX, baseY: first.baseY, vx: 0, vy: 0, pressure: last.pressure });
                 }
             }
         });
-        
         if (preDrawSnapshotRef.current) {
             historyRef.current.push(preDrawSnapshotRef.current);
             if (historyRef.current.length > 30) historyRef.current.shift();
@@ -776,60 +679,31 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     const isScopePoint = scope === 'point';
 
     switch (source) {
-      case 'random':
-        t = isScopePoint ? getPseudoRandom(stroke.randomSeed + pointIndex * 0.1, key as string) : getPseudoRandom(stroke.randomSeed, key as string);
-        break;
-      case 'index':
-        t = (stroke.index % 10) / 10;
-        break;
-      case 'selection-index':
-        const idx = stroke.selectionIndex ?? 0;
-        const tot = stroke.selectionTotal ?? 1;
-        t = tot > 1 ? idx / (tot - 1) : 0;
-        break;
+      case 'random': t = isScopePoint ? getPseudoRandom(stroke.randomSeed + pointIndex * 0.1, key as string) : getPseudoRandom(stroke.randomSeed, key as string); break;
+      case 'index': t = (stroke.index % 10) / 10; break;
+      case 'selection-index': t = (stroke.selectionTotal ?? 1) > 1 ? (stroke.selectionIndex ?? 0) / ((stroke.selectionTotal ?? 1) - 1) : 0; break;
       case 'time':
       case 'time-pulse':
       case 'time-step':
         const dir = config.invertDirection ? -1 : 1;
         const speedVal = config.speed ?? 1;
-        
-        // Base time factor calculation
         let timeFactor = timeRef.current * speedVal;
-        
-        // Strategy: Duration = Cycle length in seconds
-        if (config.speedStrategy === 'duration' && speedVal > 0) {
-             timeFactor = timeRef.current / speedVal; 
-        }
-        
-        // For Frequency mode: we want propagation speed (per point), not ratio (progress)
-        const phaseOffset = isScopePoint
-            ? (config.speedStrategy === 'duration' ? progress : pointIndex * 0.05)
-            : 0;
-            
+        if (config.speedStrategy === 'duration' && speedVal > 0) timeFactor = timeRef.current / speedVal; 
+        const phaseOffset = isScopePoint ? (config.speedStrategy === 'duration' ? progress : pointIndex * 0.05) : 0;
         if (source === 'time') {
             t = (timeFactor * dir + phaseOffset) % 1;
             if (t < 0) t += 1;
         } else if (source === 'time-pulse') {
-            const duty = config.paramA ?? 0.5; // Active %
-            const edge = Math.min(0.2, config.paramB ?? 0.1); // Soft Edge
-            const loopDelay = config.paramC ?? 0; // Extra pause (extended cycle length)
-            
-            // Total cycle length is 1 + loopDelay
-            const cycleLen = 1 + loopDelay;
+            const duty = config.paramA ?? 0.5;
+            const edge = Math.min(0.2, config.paramB ?? 0.1);
+            const cycleLen = 1 + (config.paramC ?? 0);
             const rawPulse = (timeFactor * dir + phaseOffset) % cycleLen;
-            let normPulse = rawPulse;
-            if (normPulse < 0) normPulse += cycleLen;
-            
-            if (normPulse > 1) {
-                // In the extended pause zone
-                t = 0;
-            } else {
-                // In the active pulse zone (0-1)
-                if (normPulse < edge) t = normPulse / edge;
-                else if (normPulse < duty) t = 1;
-                else if (normPulse < duty + edge) t = 1 - (normPulse - duty) / edge;
-                else t = 0;
-            }
+            let normPulse = rawPulse < 0 ? rawPulse + cycleLen : rawPulse;
+            if (normPulse > 1) t = 0;
+            else if (normPulse < edge) t = normPulse / edge;
+            else if (normPulse < duty) t = 1;
+            else if (normPulse < duty + edge) t = 1 - (normPulse - duty) / edge;
+            else t = 0;
         } else if (source === 'time-step') {
             const steps = 4;
             let rawStep = (timeFactor * dir + phaseOffset) % 1;
@@ -837,38 +711,19 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             t = Math.floor(rawStep * steps) / (steps - 1);
         }
         break;
-      case 'velocity':
-        t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1);
-        break;
-      case 'pressure':
-         t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1);
-        break;
-      case 'cursor':
-        const dist = isScopePoint ? cursorDistPoint : cursorDistCenter;
-        t = (dist < cursorRadius) ? 1 - (dist / cursorRadius) : 0;
-        break;
-      case 'path':
-        t = progress; 
-        break;
-      case 'path-mirror':
-        t = 1 - Math.abs((progress - 0.5) * 2);
-        break;
-      case 'path-mirror-inv':
-        t = Math.abs((progress - 0.5) * 2);
-        break;
-      case 'audio-live':
-        t = audioManager.getGlobalAudioData().average / 255;
-        break;
-      case 'audio-sample':
-        t = audioManager.getStrokeAmplitude(stroke.id);
-        break;
+      case 'velocity': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
+      case 'pressure': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
+      case 'cursor': const dist = isScopePoint ? cursorDistPoint : cursorDistCenter; t = (dist < cursorRadius) ? 1 - (dist / cursorRadius) : 0; break;
+      case 'path': t = progress; break;
+      case 'path-mirror': t = 1 - Math.abs((progress - 0.5) * 2); break;
+      case 'path-mirror-inv': t = Math.abs((progress - 0.5) * 2); break;
+      case 'audio-live': t = audioManager.getGlobalAudioData().average / 255; break;
+      case 'audio-sample': t = audioManager.getStrokeAmplitude(stroke.id); break;
     }
     
     const inMin = config.inputMin ?? 0;
     const inMax = config.inputMax ?? 1;
-    if (inMax > inMin) {
-        t = (t - inMin) / (inMax - inMin);
-    }
+    if (inMax > inMin) t = (t - inMin) / (inMax - inMin);
     t = Math.max(0, Math.min(1, t));
 
     const easedT = applyEasing(t, easing, config);
@@ -879,14 +734,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       let minDistSq = Infinity;
       let closestIdx = 0;
       for(let i=0; i<stroke.points.length; i++) {
-          const p = stroke.points[i];
-          const dSq = (p.x - px)**2 + (p.y - py)**2;
+          const dSq = (stroke.points[i].x - px)**2 + (stroke.points[i].y - py)**2;
           if (dSq < minDistSq) { minDistSq = dSq; closestIdx = i; }
       }
       return closestIdx / (stroke.points.length - 1 || 1);
   };
 
-  // --- PHYSICS ---
   const updatePhysics = () => {
     if (!isPlaying) return;
     timeRef.current += 0.01;
@@ -1052,8 +905,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       if (len === 0) continue;
       for (const p of stroke.points) { cx += p.x; cy += p.y; totalSpeed += Math.hypot(p.vx, p.vy); }
       stroke.center.x = cx / len; stroke.center.y = cy / len;
+      stroke.velocity = { x: 0, y: 0 }; // Placeholder for swarm average
       
-      const avgStrokeSpeed = totalSpeed / len; 
       const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000;
       const influenceRadius = stroke.params.mouseInfluenceRadius || 150;
       const swarmF = swarmForces.get(stroke.id) || { vx: 0, vy: 0 };
@@ -1062,7 +915,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           const ox = stroke.originCenter?.x ?? stroke.center.x; const oy = stroke.originCenter?.y ?? stroke.center.y;
           const dispX = stroke.center.x - ox; const dispY = stroke.center.y - oy;
           audioManager.updateStrokeSound(stroke.id, stroke.sound.bufferId, { ...stroke.sound, reverb: stroke.sound.reverbSend }, {
-               cursorDist: centerDist, physicsSpeed: avgStrokeSpeed * 20, displacement: { dist: Math.hypot(dispX, dispY), x: dispX, y: dispY },
+               cursorDist: centerDist, physicsSpeed: (totalSpeed / len) * 20, displacement: { dist: Math.hypot(dispX, dispY), x: dispX, y: dispY },
                timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0
           });
       }
@@ -1133,6 +986,67 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Helper: Fillet (Rounded Corner) Path for ONE continuous path (Batch)
+    const tracePath = (ctx: CanvasRenderingContext2D, points: Point[], rounding: number, closePath: boolean) => {
+        if (points.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+
+        if (rounding <= 0.01) {
+            for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        } else {
+             // Corner cutting algorithm (Fillet)
+             for (let i = 1; i < points.length - 1; i++) {
+                const p0 = points[i - 1];
+                const p1 = points[i];
+                const p2 = points[i + 1];
+
+                const v1x = p0.x - p1.x;
+                const v1y = p0.y - p1.y;
+                const v2x = p2.x - p1.x;
+                const v2y = p2.y - p1.y;
+
+                const len1 = Math.hypot(v1x, v1y);
+                const len2 = Math.hypot(v2x, v2y);
+                
+                const maxR = Math.min(len1, len2) * 0.5;
+                const r = rounding * maxR;
+
+                if (r < 0.1) {
+                     ctx.lineTo(p1.x, p1.y);
+                } else {
+                     const n1 = r / len1; 
+                     const n2 = r / len2;
+                     const startX = p1.x + v1x * n1;
+                     const startY = p1.y + v1y * n1;
+                     const endX = p1.x + v2x * n2;
+                     const endY = p1.y + v2y * n2;
+
+                     ctx.lineTo(startX, startY);
+                     ctx.quadraticCurveTo(p1.x, p1.y, endX, endY);
+                }
+             }
+             ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+        }
+        if (closePath) ctx.closePath();
+    };
+
+    // Helper: Get Corner Geometry for Segmented Draw
+    const getCorner = (p0: Point, p1: Point, p2: Point, rounding: number) => {
+        const v1x = p0.x - p1.x; const v1y = p0.y - p1.y;
+        const v2x = p2.x - p1.x; const v2y = p2.y - p1.y;
+        const len1 = Math.hypot(v1x, v1y); const len2 = Math.hypot(v2x, v2y);
+        const maxR = Math.min(len1, len2) * 0.5;
+        const r = rounding * maxR;
+        if (r < 0.1) return null;
+        
+        const n1 = r / len1; const n2 = r / len2;
+        return {
+            start: { x: p1.x + v1x * n1, y: p1.y + v1y * n1 },
+            end: { x: p1.x + v2x * n2, y: p1.y + v2y * n2 }
+        };
+    };
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // GRID
@@ -1189,7 +1103,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     ctx.lineTo(p2.x, p2.y);
                     
                     if (isConnSelected) {
-                        ctx.strokeStyle = `rgba(99, 102, 241, 0.8)`; // Indigo for selected
+                        ctx.strokeStyle = `rgba(99, 102, 241, 0.8)`;
                         ctx.lineWidth = 2;
                         ctx.shadowColor = `rgba(99, 102, 241, 0.5)`;
                         ctx.shadowBlur = 8;
@@ -1205,7 +1119,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         }
     }
     
-    // Connection Preview
     if (pointerRef.current.connectionStart && pointerRef.current.isDown) {
         const p1 = findPoint(pointerRef.current.connectionStart);
         if (p1) {
@@ -1219,7 +1132,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         }
     }
     
-    // Draw Active Selection Box
     if (selectionBoxRef.current.active) {
         const sx = selectionBoxRef.current.startX;
         const sy = selectionBoxRef.current.startY;
@@ -1230,7 +1142,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         ctx.fillStyle = 'rgba(79, 70, 229, 0.1)';
         ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)';
         ctx.lineWidth = 1;
-        ctx.setLineDash([]); // Ensure solid line
+        ctx.setLineDash([]);
         ctx.fillRect(sx, sy, w, h);
         ctx.strokeRect(sx, sy, w, h);
         ctx.restore();
@@ -1238,7 +1150,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
     const strokesToDraw = [...strokesRef.current, ...activeStrokesRef.current];
 
-    // DRAW SELECTION GLOW (Underlay) - Only when paused
     if (!isPlaying) {
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -1246,35 +1157,19 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         
         strokesToDraw.forEach(stroke => {
             if (!selectedStrokeIds.has(stroke.id) || stroke.points.length < 2) return;
-            
             const { points, params } = stroke;
-            ctx.beginPath();
-            if (params.pathRounding > 0 || params.smoothing > 0) {
-                ctx.moveTo(points[0].x, points[0].y);
-                for (let i = 0; i < points.length - 1; i++) {
-                    const mx = (points[i].x + points[i+1].x) / 2;
-                    const my = (points[i].y + points[i+1].y) / 2;
-                    ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
-                }
-                ctx.lineTo(points[points.length-1].x, points[points.length-1].y);
-            } else {
-                ctx.moveTo(points[0].x, points[0].y);
-                for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-            }
-            if (params.closePath) ctx.closePath();
+            
+            tracePath(ctx, points, params.pathRounding, params.closePath);
 
-            // Glow Stroke
-            ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)'; // Indigo/Blue Glow
-            ctx.lineWidth = params.strokeWidth + 6; // Wider than the stroke
+            ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)';
+            ctx.lineWidth = params.strokeWidth + 6;
             ctx.shadowBlur = 10;
             ctx.shadowColor = 'rgba(79, 70, 229, 0.8)';
             ctx.stroke();
-            
-            ctx.shadowBlur = 0; // Reset
+            ctx.shadowBlur = 0;
         });
     }
 
-    // DRAW STROKES
     strokesToDraw.forEach(stroke => {
       if (stroke.points.length < 2) return;
       const { params, points, center } = stroke;
@@ -1282,19 +1177,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       const centerDist = Math.hypot(pointerRef.current.x - center.x, pointerRef.current.y - center.y);
       const influenceRadius = params.mouseInfluenceRadius || 150;
 
-      // FILL
+      // FILL (Always Continuous Path to avoid artifacts)
       if (params.fill.enabled) {
-          ctx.beginPath();
-          if (points.length > 2) {
-             const p0 = points[0];
-             ctx.moveTo(p0.x, p0.y);
-             for (let i = 1; i < points.length; i++) {
-                ctx.lineTo(points[i].x, points[i].y);
-             }
-             if (params.closePath) {
-                 ctx.closePath();
-             } 
-          }
+          tracePath(ctx, points, params.pathRounding, params.closePath);
 
           ctx.globalCompositeOperation = params.fill.blendMode || 'source-over';
           ctx.globalAlpha = params.fill.opacity;
@@ -1343,11 +1228,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ctx.filter = 'none';
         }
 
-        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth && !params.modulations?.opacity; 
+        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth && !params.modulations?.opacity && !params.modulations?.hueShift; 
 
         if (canBatchDraw) {
-            ctx.beginPath();
-            
+            // BATCH DRAW (Optimized, Single Path)
             const bounds = getStrokeBounds(stroke);
             const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180;
             const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
@@ -1357,6 +1241,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             const gy2 = bounds.cy + Math.sin(angleRad) * r;
 
             let strokeStyle: string | CanvasGradient = params.color;
+            
+            // APPLY GLOBAL HUE SHIFT FOR BATCH DRAW
+            if (params.hueShift !== 0 || (params.audioToColor && isMicEnabled)) {
+                 let shift = params.hueShift;
+                 if (params.audioToColor && isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
+                 strokeStyle = getShiftedColor(strokeStyle as string, shift);
+            }
+
             if (params.gradient.enabled) {
                 const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
                 const midpoint = params.strokeGradientMidpoint ?? 0.5;
@@ -1368,22 +1260,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 strokeStyle = grad;
             }
 
-            if (points.length > 0) {
-                 if (params.pathRounding > 0 || params.smoothing > 0) {
-                      ctx.moveTo(points[0].x, points[0].y);
-                      for (let i = 0; i < points.length - 1; i++) {
-                          const p0 = points[i];
-                          const p1 = points[i+1];
-                          const mx = (p0.x + p1.x) / 2;
-                          const my = (p0.y + p1.y) / 2;
-                          ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
-                      }
-                      ctx.lineTo(points[points.length-1].x, points[points.length-1].y);
-                 } else {
-                      ctx.moveTo(points[0].x, points[0].y);
-                      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-                 }
-            }
+            tracePath(ctx, points, params.pathRounding, params.closePath);
 
             if (params.glowStrength > 0) {
                 ctx.shadowColor = strokeStyle as string; 
@@ -1397,9 +1274,24 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ctx.shadowBlur = 0;
 
         } else {
-            for (let i = 0; i < points.length - 1; i++) {
+            // SEGMENTED DRAW (Modulated, Point-by-Point)
+            
+            // Pre-calc corners if needed for smooth segmented joints
+            const corners: any[] = [];
+            if (params.pathRounding > 0) {
+                for (let i = 1; i < points.length - 1; i++) {
+                    corners[i] = getCorner(points[i-1], points[i], points[i+1], params.pathRounding);
+                }
+            }
+
+            let lastX = points[0].x;
+            let lastY = points[0].y;
+
+            // Iterate points to draw segments
+            // i is the target point of the segment. 
+            // Segment i goes from (CornerEnd of i-1) to (CornerEnd of i) roughly.
+            for (let i = 1; i < points.length; i++) {
                 const p1 = points[i];
-                const p2 = points[i + 1];
                 const progress = i / (points.length - 1);
                 const pDist = Math.hypot(pointerRef.current.x - p1.x, pointerRef.current.y - p1.y);
 
@@ -1410,19 +1302,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 ctx.lineWidth = width;
                 ctx.globalAlpha = opacity;
                 
-                if (params.glowStrength > 0) {
-                    ctx.shadowColor = params.color;
-                    ctx.shadowBlur = params.glowStrength;
-                } else {
-                    ctx.shadowBlur = 0;
-                }
+                if (params.glowStrength > 0) { ctx.shadowColor = params.color; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
+                if (blur > 0) { ctx.filter = `blur(${blur}px)`; } else { ctx.filter = 'none'; }
 
-                if (blur > 0) {
-                    ctx.filter = `blur(${blur}px)`;
-                } else {
-                    ctx.filter = 'none';
-                }
-
+                // Determine Color
                 if (params.gradient.enabled) {
                     if (params.strokeGradientType === 'path') {
                         const midpoint = params.strokeGradientMidpoint ?? 0.5;
@@ -1443,9 +1326,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && isMicEnabled)) {
                          let shift = params.hueShift;
+                         // Per point modulation overrides global
                          if (params.modulations?.hueShift) {
                              shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i);
+                         } else if (params.hueShift !== 0) {
+                             shift = params.hueShift;
                          }
+                         
                          if (params.audioToColor && isMicEnabled) {
                              shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
                          }
@@ -1454,16 +1341,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                     ctx.strokeStyle = c;
                 }
 
+                // Draw Segment with potential Rounding
                 ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                
-                if (params.smoothModulation) {
-                    const midX = (p1.x + p2.x) / 2;
-                    const midY = (p1.y + p2.y) / 2;
-                    ctx.lineTo(midX, midY); 
-                    ctx.lineTo(p2.x, p2.y);
+                ctx.moveTo(lastX, lastY);
+
+                if (params.pathRounding > 0 && i < points.length - 1) {
+                    const c = corners[i];
+                    if (c) {
+                        ctx.lineTo(c.start.x, c.start.y);
+                        ctx.quadraticCurveTo(points[i].x, points[i].y, c.end.x, c.end.y);
+                        lastX = c.end.x;
+                        lastY = c.end.y;
+                    } else {
+                        // Fallback if corner invalid
+                        ctx.lineTo(points[i].x, points[i].y);
+                        lastX = points[i].x;
+                        lastY = points[i].y;
+                    }
                 } else {
-                    ctx.lineTo(p2.x, p2.y);
+                    // Last point or no rounding
+                    ctx.lineTo(points[i].x, points[i].y);
+                    lastX = points[i].x;
+                    lastY = points[i].y;
                 }
                 
                 ctx.stroke();
@@ -1476,13 +1375,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
             ctx.fillStyle = selectedStrokeIds.has(stroke.id) ? '#4f46e5' : 'rgba(0,0,0,0.2)';
             const ptSize = Math.max(2, params.strokeWidth / 3);
             for (const p of points) {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, ptSize, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x, p.y, ptSize, 0, Math.PI * 2); ctx.fill();
             }
         }
       }
-      
       ctx.shadowBlur = 0;
     });
 
@@ -1490,13 +1386,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         const closest = getClosestPoint(pointerRef.current.x, pointerRef.current.y, 40);
         if (closest) {
             const p = findPoint(closest);
-            if (p) {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-                ctx.strokeStyle = '#22c55e';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            }
+            if (p) { ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2; ctx.stroke(); }
         }
     }
   };
