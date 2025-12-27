@@ -39,7 +39,7 @@ export const DEFAULT_GLOBAL_TOOL: GlobalToolConfig = {
   connectionsVisible: true 
 };
 
-export const DEFAULT_GRID: GridConfig = { enabled: false, size: 40, snap: true, visible: true, color: '#cbd5e1', opacity: 0.9 };
+export const DEFAULT_GRID: GridConfig = { enabled: false, size: 40, snap: true, visible: true, color: '#cbd5e1', opacity: 0.9, snapFactor: 1 };
 export const DEFAULT_SYMMETRY: SymmetryConfig = { enabled: false, type: 'horizontal', count: 6, visible: true };
 
 export const DEFAULT_THEME: UITheme = {
@@ -89,7 +89,7 @@ export const PARAM_RANGES: Record<string, {min: number, max: number}> = {
   mouseInfluenceRadius: {min: 100, max: 300}, mouseRepulsion: {min: 0, max: 5}, mouseAttraction: {min: 0, max: 5}, mouseFalloff: {min: 1, max: 4},
   strokeWidth: {min: 0, max: 30}, opacity: {min: 0.5, max: 1}, glowStrength: {min: 0, max: 20}, blurStrength: {min: 0, max: 20},
   alignmentForce: {min: 0, max: 0.5}, cohesionForce: {min: 0, max: 0.5}, swarmCursorInfluence: { min: 0, max: 1 },
-  pathRounding: {min: 0, max: 1}, hueShift: { min: 0, max: 360 },
+  pathRounding: {min: 0, max: 2}, hueShift: { min: 0, max: 360 },
   strokeGradientAngle: {min: 0, max: 360},
   strokeGradientMidpoint: {min: 0, max: 1},
   fillGradientAngle: {min: 0, max: 360},
@@ -116,7 +116,8 @@ export const PARAM_DESCRIPTIONS: Record<string, string> = {
   closePathRadius: "Maximum distance to trigger the automatic closing of the path.",
   lineCap: "Shape of the stroke ends: Round, Butt (flat), or Square.",
   swarmCursorInfluence: "Controls when swarm logic applies. 0 = Always active. 1 = Only applies when cursor is near.",
-  strokeGradientType: "Linear: Gradient is applied across the bounding box. Path: Gradient follows the curvature of the stroke."
+  strokeGradientType: "Linear: Gradient is applied across the bounding box. Path: Gradient follows the curvature of the stroke.",
+  pathRounding: "Corner roundness. 0 = Sharp, 1 = Half-way, 2 = Full Node-to-Node Arc."
 };
 
 export const DEFAULT_PRESETS: Preset[] = [

@@ -36,8 +36,9 @@ export const GuidesSection: React.FC<GuidesSectionProps> = ({
                   <PanelButton onClick={() => setGridConfig(p => ({...p, visible: !p.visible}))} label={gridConfig.visible ? "HIDE POINTS" : "SHOW POINTS"} active={gridConfig.visible} />
                   <PanelButton onClick={() => setGridConfig(p => ({...p, snap: !p.snap}))} label={gridConfig.snap ? "SNAP ON" : "SNAP OFF"} active={gridConfig.snap} />
                 </div>
-                {shouldShow('pathRounding') && <Slider label="Roundness" value={currentParams.pathRounding} min={0} max={1} step={0.01} onChange={(v) => updateParam('pathRounding', v)} {...getCommonProps('pathRounding')} />}
-                <Slider label="Cell Size" value={gridConfig.size} min={20} max={200} step={10} onChange={(v) => setGridConfig(p => ({...p, size: v}))} />
+                {shouldShow('pathRounding') && <Slider label="Roundness" value={currentParams.pathRounding} min={0} max={2} step={0.1} onChange={(v) => updateParam('pathRounding', v)} {...getCommonProps('pathRounding')} description="0 = Sharp, 1 = Classic, 2 = Max Arc" />}
+                <Slider label="Cell Size" value={gridConfig.size} min={10} max={200} step={10} onChange={(v) => setGridConfig(p => ({...p, size: v}))} />
+                <Slider label="Snap Scale" value={gridConfig.snapFactor || 1} min={1} max={10} step={1} onChange={(v) => setGridConfig(p => ({...p, snapFactor: v}))} description="Multiply snapping grid relative to visual grid" />
                 <Slider label="Opacity" value={gridConfig.opacity} min={0.1} max={1} step={0.1} onChange={(v) => setGridConfig(p => ({...p, opacity: v}))} />
               </div>
             )}

@@ -110,6 +110,7 @@ export interface Connection {
 export interface GridConfig {
   enabled: boolean;
   size: number;      // Grid cell size
+  snapFactor: number; // NEW: Multiplier for snapping logic (e.g. 2 = snap every 2 cells)
   snap: boolean;     // Snap drawing to grid
   visible: boolean;  // Show grid lines
   color: string;
