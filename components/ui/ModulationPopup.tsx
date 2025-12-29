@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { Minus, MoreHorizontal, Clock, ArrowLeftRight, ArrowRightFromLine, Timer, Activity, Mic, MousePointer } from 'lucide-react';
+import { Minus, MoreHorizontal, Clock, ArrowLeftRight, ArrowRightFromLine, Timer, Activity, Mic, MousePointer, Dices, Radio, Sparkles } from 'lucide-react';
 import { ModulationConfig, ModulationSource, EasingMode } from '../../types';
 import { BezierEditor } from './BezierEditor';
 import { audioManager } from '../../services/audioService';
@@ -11,19 +11,23 @@ interface ModulationPopupProps {
   baseValue: number;
 }
 
-const MiniSlider = ({ label, value, min, max, step, onChange, unit = "" }: any) => (
-  <div className="flex items-center gap-2">
-    <span className="text-[9px] font-bold text-slate-400 w-16 text-right">{label}</span>
+const MiniSlider = ({ label, value, min, max, step, onChange, icon: Icon }: any) => (
+  <div className="flex flex-col gap-1">
+    <div className="flex justify-between items-center px-1">
+        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter flex items-center gap-1">
+            {Icon && <Icon size={8} />} {label}
+        </span>
+        <span className="text-[8px] font-mono text-indigo-500">{value.toFixed(2)}</span>
+    </div>
     <input 
         type="range" min={min} max={max} step={step} value={value} 
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="flex-1 accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+        className="w-full accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
     />
-    <span className="text-[9px] font-mono text-slate-500 w-6">{value.toFixed(1)}{unit}</span>
   </div>
 );
 
-// New component for real-time visualization inside popup
+// Real-time visualization for live signals (only Audio is global enough to show here)
 const ModulationMonitor = ({ source }: { source: ModulationSource }) => {
     const [level, setLevel] = useState(0);
 
@@ -32,10 +36,6 @@ const ModulationMonitor = ({ source }: { source: ModulationSource }) => {
         const update = () => {
             if (source === 'audio-live') {
                 setLevel(audioManager.getGlobalAudioData().average / 255);
-            } else if (source === 'cursor') {
-                // Approximate global cursor level for visual feedback
-                // (This is just for UI visualization, actual physics uses precise coords)
-                setLevel(0.5); 
             }
             req = requestAnimationFrame(update);
         };
@@ -43,16 +43,15 @@ const ModulationMonitor = ({ source }: { source: ModulationSource }) => {
         return () => cancelAnimationFrame(req);
     }, [source]);
 
-    const isAudio = source === 'audio-live';
-
     return (
         <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded border border-slate-200">
-            <div className="flex-none text-indigo-500">
-                {isAudio ? <Mic size={10} /> : <MousePointer size={10} />}
+            <div className="flex-none text-indigo-500 flex items-center gap-1">
+                <Mic size={10} />
+                <span className="text-[7px] font-bold uppercase tracking-tighter">Signal</span>
             </div>
             <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
                 <div 
-                    className={`absolute inset-y-0 left-0 transition-all duration-75 ${isAudio ? 'bg-indigo-500' : 'bg-amber-500'}`}
+                    className="absolute inset-y-0 left-0 transition-all duration-75 bg-indigo-500"
                     style={{ width: `${level * 100}%` }}
                 />
             </div>
@@ -86,8 +85,8 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
         inputMin: 0,
         inputMax: s === 'cursor' ? 300 : 1,
         paramA: 0.5, 
-        paramB: 0, // 0: Radial, 1: X, 2: Y
-        paramC: 0, 
+        paramB: 0.8, // Default smoothness for random
+        paramC: Math.random(), // Default seed for random
         paramD: 0.5,
         paramE: 0, 
         paramF: 1, 
@@ -142,7 +141,8 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
             </select>
           </div>
 
-          {(isAudioLive || isCursor) && <ModulationMonitor source={source as ModulationSource} />}
+          {/* Monitor only for global signals like Live Audio */}
+          {isAudioLive && <ModulationMonitor source={source as ModulationSource} />}
 
           {source !== 'none' && (
             <>
@@ -235,9 +235,40 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
                   <option value="step">Snap Step</option>
                   <option value="triangle">Triangle</option>
                   <option value="sine">Sine</option>
+                  <option value="random">Random (Noise)</option>
                   <option value="custom-bezier">Custom Bezier</option>
                 </select>
               </div>
+
+              {/* Specific controls for parameterized Random noise */}
+              {easing === 'random' && (
+                  <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col gap-3 animate-fade-in-up">
+                      <div className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1 mb-1">
+                          <Dices size={10} /> Noise Parameters
+                      </div>
+                      <MiniSlider 
+                        label="Complexity" 
+                        icon={Radio}
+                        value={config?.paramA ?? 0.2} 
+                        min={0} max={1} step={0.01} 
+                        onChange={(v: number) => updateConfig({ paramA: v })} 
+                      />
+                      <MiniSlider 
+                        label="Fluidity" 
+                        icon={Sparkles}
+                        value={config?.paramB ?? 0.8} 
+                        min={0} max={1} step={0.01} 
+                        onChange={(v: number) => updateConfig({ paramB: v })} 
+                      />
+                      <MiniSlider 
+                        label="Variation" 
+                        icon={Activity}
+                        value={config?.paramC ?? 0} 
+                        min={0} max={1} step={0.01} 
+                        onChange={(v: number) => updateConfig({ paramC: v })} 
+                      />
+                  </div>
+              )}
 
               {easing === 'custom-bezier' && (
                   <BezierEditor 

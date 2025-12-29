@@ -1,3 +1,4 @@
+
 import { EasingMode, ModulationConfig } from '../types';
 
 // Cubic Bezier function solver
@@ -57,7 +58,33 @@ export const applyEasing = (t: number, mode?: EasingMode, config?: ModulationCon
      if (mode === 'triangle') return 1 - Math.abs((t - 0.5) * 2); 
      if (mode === 'triangle-inv') return Math.abs((t - 0.5) * 2); 
      if (mode === 'sine') return (Math.sin(t * Math.PI * 2 - Math.PI/2) + 1) / 2;
-     if (mode === 'random') return Math.random(); 
+     
+     // Parameterized Random Noise Curve
+     if (mode === 'random') {
+         if (!config) return Math.random();
+         const freq = (config.paramA ?? 0.2) * 40; // 0 to 40 complexity
+         const smoothness = config.paramB ?? 0.8; // 0 = jagged, 1 = smooth
+         const seed = (config.paramC ?? 0) * 1000;
+         
+         const position = t * freq + seed;
+         const i = Math.floor(position);
+         const f = position - i;
+         
+         const v1 = getPseudoRandom(i, 'noise');
+         const v2 = getPseudoRandom(i + 1, 'noise');
+         
+         // Interpolation curve based on smoothness
+         let t_interp = f;
+         if (smoothness > 0) {
+             // More smoothness = deeper easeInOut transition
+             const power = 1 + smoothness * 4;
+             t_interp = f < 0.5 
+                ? Math.pow(2 * f, power) / 2 
+                : 1 - Math.pow(2 * (1 - f), power) / 2;
+         }
+         
+         return v1 + (v2 - v1) * t_interp;
+     }
      
      if (mode === 'custom-bezier' && config) {
          return cubicBezier(t, config.paramA ?? 0.5, config.paramB ?? 0.5, config.paramC ?? 0.5, config.paramD ?? 0.5, config.paramE ?? 0, config.paramF ?? 1);
