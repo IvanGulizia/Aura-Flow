@@ -41,7 +41,7 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
                 </div>
                 <div className="text-[9px] text-slate-500 italic p-2 bg-blue-50 border border-blue-100 rounded mt-2"> 
                   Drag between points to connect. <br/>
-                  <span className="font-bold text-indigo-600">Note:</span> Manual links now use the <span className="underline">current Brush Settings</span> (Interaction -> Magnetic Bonding) for stiffness and strength.
+                  <span className="font-bold text-indigo-600">Note:</span> Manual links now use the <span className="underline">current Brush Settings</span> (Interaction &rarr; Magnetic Bonding) for stiffness and strength.
                 </div>
               </div>
             ) : globalForceTool !== 'cursor' ? (
