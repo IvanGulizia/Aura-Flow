@@ -31,7 +31,9 @@ export const VisualsSection: React.FC<VisualsSectionProps> = ({
             {shouldShow('lineCap') && <Select label="Line Cap" value={currentParams.lineCap || 'round'} options={['round', 'butt', 'square']} onChange={(v) => updateParam('lineCap', v as LineCapMode)} description="End style of the stroke" />}
             {shouldShow('seamlessPath') && <Toggle label="Seamless Path" value={currentParams.seamlessPath} onChange={(v) => updateParam('seamlessPath', v)} />}
             {shouldShow('pathRounding') && <Slider label="Roundness" value={currentParams.pathRounding} min={0} max={2} step={0.1} onChange={(v) => updateParam('pathRounding', v)} {...getCommonProps('pathRounding')} description="0 = Sharp, 1 = Classic, 2 = Max Arc" />}
-            {shouldShow('smoothModulation') && <Toggle label="Smooth Modulation" description={PARAM_DESCRIPTIONS['smoothModulation']} value={currentParams.smoothModulation} onChange={(v) => updateParam('smoothModulation', v)} />}
+            
+            {/* Smooth Modulation Removed per user request to decouple from Hue Shift */}
+
             {shouldShow('drawPoints') && <Toggle label="Draw Points" description={PARAM_DESCRIPTIONS['drawPoints']} value={currentParams.drawPoints} onChange={(v) => updateParam('drawPoints', v)} />}
             {shouldShow('hueShift') && <Slider label="Hue Shift" value={currentParams.hueShift || 0} min={0} max={360} step={1} onChange={(v) => updateParam('hueShift', v)} {...getCommonProps('hueShift')} />}
           </div>

@@ -1,14 +1,27 @@
+
 export const hexToHsl = (hex: string): { h: number, s: number, l: number } => {
+  // 1. Sanitize input
+  const cleanHex = hex.replace(/[^0-9a-fA-F]/g, '');
+  
   let r = 0, g = 0, b = 0;
-  if (hex.length === 4) {
-    r = parseInt("0x" + hex[1] + hex[1]);
-    g = parseInt("0x" + hex[2] + hex[2]);
-    b = parseInt("0x" + hex[3] + hex[3]);
-  } else if (hex.length === 7) {
-    r = parseInt("0x" + hex[1] + hex[2]);
-    g = parseInt("0x" + hex[3] + hex[4]);
-    b = parseInt("0x" + hex[5] + hex[6]);
+
+  // 2. Parse based on length
+  if (cleanHex.length === 3) {
+    r = parseInt(cleanHex[0] + cleanHex[0], 16);
+    g = parseInt(cleanHex[1] + cleanHex[1], 16);
+    b = parseInt(cleanHex[2] + cleanHex[2], 16);
+  } else if (cleanHex.length === 6) {
+    r = parseInt(cleanHex.substring(0, 2), 16);
+    g = parseInt(cleanHex.substring(2, 4), 16);
+    b = parseInt(cleanHex.substring(4, 6), 16);
+  } else {
+    // Fallback for invalid hex -> Return Black (Safety)
+    return { h: 0, s: 0, l: 0 };
   }
+
+  // 3. NaN Safety Check
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return { h: 0, s: 0, l: 0 };
+
   r /= 255; g /= 255; b /= 255;
   const cmin = Math.min(r,g,b), cmax = Math.max(r,g,b), delta = cmax - cmin;
   let h = 0, s = 0, l = 0;
@@ -26,14 +39,22 @@ export const hexToHsl = (hex: string): { h: number, s: number, l: number } => {
   s = +(s * 100).toFixed(1);
   l = +(l * 100).toFixed(1);
 
+  // 4. Final Safety Clamp
+  if (isNaN(h)) h = 0;
+  if (isNaN(s)) s = 0;
+  if (isNaN(l)) l = 0;
+
   return { h, s, l };
 };
 
 export const getShiftedColor = (hex: string, shift: number): string => {
-    if (shift === 0) return hex;
+    if (shift === 0 || isNaN(shift)) return hex;
     const hsl = hexToHsl(hex);
-    const newH = (hsl.h + shift) % 360;
-    return `hsl(${newH}, ${hsl.s}%, ${hsl.l}%)`;
+    // Ensure positive hue
+    let newH = (hsl.h + shift) % 360;
+    if (newH < 0) newH += 360;
+    
+    return `hsl(${Math.round(newH)}, ${Math.round(hsl.s)}%, ${Math.round(hsl.l)}%)`;
 };
 
 // Returns color mixed in RGB space
@@ -41,12 +62,17 @@ export const getGradientMiddleColor = (c1: string, c2: string, ratio: number = 0
     const parse = (c: string) => {
         if (c.startsWith('rgb')) {
             const matches = c.match(/\d+/g);
-            if (matches) return [parseInt(matches[0]), parseInt(matches[1]), parseInt(matches[2])];
+            if (matches && matches.length >= 3) return [parseInt(matches[0]), parseInt(matches[1]), parseInt(matches[2])];
         }
-        if (c.length === 4) c = '#' + c[1] + c[1] + c[2] + c[2] + c[3] + c[3];
-        const r = parseInt(c.slice(1, 3), 16);
-        const g = parseInt(c.slice(3, 5), 16);
-        const b = parseInt(c.slice(5, 7), 16);
+        
+        // Hex fallback
+        let hex = c.replace(/[^0-9a-fA-F]/g, '');
+        if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+        if (hex.length !== 6) return [0,0,0]; // Safety
+
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
         return [r, g, b];
     };
     
@@ -54,22 +80,24 @@ export const getGradientMiddleColor = (c1: string, c2: string, ratio: number = 0
     let [r2, g2, b2] = [255,255,255];
     
     try { 
-        [r1, g1, b1] = parse(c1);
-        [r2, g2, b2] = parse(c2);
+        const c1Parsed = parse(c1);
+        const c2Parsed = parse(c2);
+        if (c1Parsed) [r1, g1, b1] = c1Parsed;
+        if (c2Parsed) [r2, g2, b2] = c2Parsed;
     } catch(e) {}
 
-    const r = Math.round(r1 + (r2 - r1) * ratio);
-    const g = Math.round(g1 + (g2 - g1) * ratio);
-    const b = Math.round(b1 + (b2 - b1) * ratio);
+    const r = Math.max(0, Math.min(255, Math.round(r1 + (r2 - r1) * ratio)));
+    const g = Math.max(0, Math.min(255, Math.round(g1 + (g2 - g1) * ratio)));
+    const b = Math.max(0, Math.min(255, Math.round(b1 + (b2 - b1) * ratio)));
     
     return `rgb(${r}, ${g}, ${b})`;
 };
 
 // Multi-color interpolation
 export const interpolateColors = (colors: string[], t: number): string => {
-    if (colors.length === 0) return '#000000';
+    if (!colors || colors.length === 0) return '#000000';
     if (colors.length === 1) return colors[0];
-    if (t <= 0) return colors[0];
+    if (t <= 0 || isNaN(t)) return colors[0];
     if (t >= 1) return colors[colors.length - 1];
 
     const scaledT = t * (colors.length - 1);
@@ -80,9 +108,12 @@ export const interpolateColors = (colors: string[], t: number): string => {
 };
 
 export const hexToRgba = (hex: string, alpha: number) => {
-  if (!hex.startsWith('#')) return hex;
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
+  let cleanHex = hex.replace(/[^0-9a-fA-F]/g, '');
+  if (cleanHex.length === 3) cleanHex = cleanHex[0]+cleanHex[0]+cleanHex[1]+cleanHex[1]+cleanHex[2]+cleanHex[2];
+  if (cleanHex.length !== 6) return `rgba(0,0,0,${alpha})`;
+
+  const r = parseInt(cleanHex.slice(0, 2), 16);
+  const g = parseInt(cleanHex.slice(2, 4), 16);
+  const b = parseInt(cleanHex.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };

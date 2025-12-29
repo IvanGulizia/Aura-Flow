@@ -90,7 +90,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       latestProps.current = props;
   });
 
-  // ... (Helper functions omitted for brevity, identical to previous version) ...
+  // ... (Helper functions) ...
   const getPointerCoordinates = (e: PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return { x: 0, y: 0 };
@@ -139,7 +139,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
 
   const cloneStrokes = (strokes: Stroke[]): Stroke[] => { try { return JSON.parse(JSON.stringify(strokes)); } catch (e) { return []; } };
 
-  // ... (Event Listeners & Effects omitted for brevity, identical) ...
+  // ... (Event Listeners & Effects) ...
   useEffect(() => {
     const canvas = containerRef.current; 
     if (!canvas) return;
@@ -216,7 +216,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         activeStrokesRef.current = newStrokes;
         needsRedrawRef.current = true;
     };
-    // ... (Other handlers identical) ...
+    
     const handleNativePointerMove = (e: PointerEvent) => {
         if (!e.cancelable) {} else { e.preventDefault(); }
         const P = latestProps.current;
@@ -306,7 +306,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     };
   }, []);
 
-  // ... (Effects for sync, resize, etc. identical) ...
+  // ... (Standard React Effects) ...
   useEffect(() => { if (selectedStrokeIds.size > 0) { let i = 0; const total = selectedStrokeIds.size; selectedStrokeIds.forEach(id => { const s = strokesRef.current.find(st => st.id === id); if (s) { s.selectionIndex = i; s.selectionTotal = total; } i++; }); } needsRedrawRef.current = true; }, [selectedStrokeIds]);
   useEffect(() => { needsRedrawRef.current = true; }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit, embedZoom]);
   const updateFitTransform = useCallback(() => {
@@ -383,7 +383,42 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       activeStrokesRef.current.forEach((stroke, idx) => {
         if (idx >= symPoints.length) return;
         const target = symPoints[idx]; const lastP = stroke.points[stroke.points.length - 1]; const isStart = stroke.points.length < 2;
-        if (isStart || ((target.x - lastP.x) ** 2 + (target.y - lastP.y) ** 2) >= stroke.params.segmentation ** 2) { stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure }); let cx = 0, cy = 0; stroke.points.forEach(p => { cx += p.x; cy += p.y; }); stroke.center.x = cx / stroke.points.length; stroke.center.y = cy / stroke.points.length; if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center }; needsRedrawRef.current = true; }
+        
+        // INTERPOLATION LOGIC:
+        // 1. Grid Mode: Interpolate based on Grid Size to allow structural arcs (avoid tiny segments).
+        // 2. Free Mode: Interpolate based on Segmentation (fine) to avoid holes/sparse look.
+        
+        const dx = target.x - lastP.x;
+        const dy = target.y - lastP.y;
+        const distSq = dx*dx + dy*dy;
+        const dist = Math.sqrt(distSq);
+        
+        let seg = Math.max(1, stroke.params.segmentation);
+        
+        // If Grid Snapping is ON, increase the segment length to the Grid Size/Snap Size.
+        if (P.gridConfig.enabled && P.gridConfig.snap) {
+            const gridSize = Math.max(10, P.gridConfig.size);
+            const snapFactor = P.gridConfig.snapFactor || 1;
+            seg = gridSize * snapFactor;
+        }
+
+        if (isStart) {
+             stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
+        } else if (dist >= seg) {
+             const steps = Math.max(1, Math.floor(dist / seg));
+             for (let i = 1; i <= steps; i++) {
+                 const t = i / steps;
+                 const nx = lastP.x + dx * t;
+                 const ny = lastP.y + dy * t;
+                 const nPressure = lastP.pressure + (pressure - lastP.pressure) * t;
+                 stroke.points.push({ x: nx, y: ny, baseX: nx, baseY: ny, vx: 0, vy: 0, pressure: nPressure });
+             }
+        } else { return; }
+
+        let cx = 0, cy = 0; stroke.points.forEach(p => { cx += p.x; cy += p.y; }); 
+        stroke.center.x = cx / stroke.points.length; stroke.center.y = cy / stroke.points.length; 
+        if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center }; 
+        needsRedrawRef.current = true;
       });
   };
   const resolveParam = (baseValue: number, key: keyof SimulationParams, stroke: Stroke, pointPressure: number, cursorDistPoint: number, cursorDistCenter: number, cursorRadius: number, progress: number, pointIndex: number): number => {
@@ -434,104 +469,174 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const { scale, x, y } = viewTransformRef.current;
     if (scale !== 1 || x !== 0 || y !== 0) { ctx.translate(x, y); ctx.scale(scale, scale); }
 
-    // Updated tracePath with Tangent Constraint System
-    const tracePath = (ctx: CanvasRenderingContext2D, stroke: Stroke, closePath: boolean) => {
-        const points = stroke.points;
-        const params = stroke.params;
-        const len = points.length;
+    // --- TANGENT-DRIVEN GEOMETRY (CONSTRAINT-BASED) ---
+    // Calculates corner geometry ensuring arcs never overlap or distort beyond allowed limits.
+    const getCornerGeometry = (p0: Point, p1: Point, p2: Point, rawRounding: number, isStartTerminal: boolean, isEndTerminal: boolean) => {
+        // 1. Calculate Distances
+        const dx1 = p0.x - p1.x, dy1 = p0.y - p1.y;
+        const dx2 = p2.x - p1.x, dy2 = p2.y - p1.y;
+        const len1 = Math.hypot(dx1, dy1);
+        const len2 = Math.hypot(dx2, dy2);
 
-        if (len < 2) return;
-        ctx.beginPath(); 
+        // Safety check for tiny segments
+        if (len1 < 0.1 || len2 < 0.1) return null;
+
+        // 2. The "Constraint" Law
+        // - A Terminal Segment (connected to open end) offers 100% of its length as usable space.
+        // - An Internal Segment (connecting two corners) offers 50% of its length as usable space (to share with neighbor).
+        const limit1 = isStartTerminal ? len1 : len1 * 0.5;
+        const limit2 = isEndTerminal ? len2 : len2 * 0.5;
+
+        // The maximum possible tangent length for this specific corner is the smallest of the two limits.
+        const maxTangent = Math.min(limit1, limit2);
         
-        // Data for resolveParam calculation
-        const centerDist = Math.hypot(pointerRef.current.x - stroke.center.x, pointerRef.current.y - stroke.center.y);
-        const influenceRadius = params.mouseInfluenceRadius || 150;
+        // 3. Application of Roundness
+        // Roundness acts as a linear scalar of the AVAILABLE capacity.
+        // Roundness 0 = 0% of maxTangent.
+        // Roundness 1 = 50% of maxTangent.
+        // Roundness 2 = 100% of maxTangent.
+        
+        // Example L-Shape (2 Terminals): maxTangent = Length.
+        // - R=1 -> 0.5 * Length (Classic rounded corner)
+        // - R=2 -> 1.0 * Length (Quarter Circle)
+        
+        // Example U-Shape (Terminal + Internal): maxTangent = 0.5 * Width (Bottom segment is usually shorter or limiting).
+        // - R=1 -> 0.5 * (0.5 * Width) = 0.25 Width (Classic U with flat bottom)
+        // - R=2 -> 1.0 * (0.5 * Width) = 0.5 Width (Full Semi-Circle meeting in middle)
+        
+        const ratio = Math.max(0, Math.min(2, rawRounding)) / 2; 
+        const tangentLen = maxTangent * ratio;
 
-        // PHASE 1: Pre-calculate tangents for every point based on rounding
-        const tangents = new Float32Array(len);
-        const segLengths = new Float32Array(len - 1);
+        if (tangentLen < 0.1) return null;
 
-        // Calculate segment lengths
-        for (let i = 0; i < len - 1; i++) {
-            const dx = points[i+1].x - points[i].x;
-            const dy = points[i+1].y - points[i].y;
-            segLengths[i] = Math.hypot(dx, dy);
+        // 3. Normalized Vectors
+        const u1x = dx1 / len1, u1y = dy1 / len1; // P1 -> P0
+        const u2x = dx2 / len2, u2y = dy2 / len2; // P1 -> P2
+
+        // 4. Calculate Angle & Radius
+        // Dot product gives cos(theta) of the interior angle
+        const dot = u1x * u2x + u1y * u2y;
+        const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+        const halfAngle = angle / 2;
+        
+        // Radius derived from Tangent: R = T * tan(alpha/2)
+        const radius = tangentLen * Math.tan(halfAngle);
+
+        // 5. Tangent Points (Start/End of Arc)
+        const sx = p1.x + u1x * tangentLen;
+        const sy = p1.y + u1y * tangentLen;
+        const ex = p1.x + u2x * tangentLen;
+        const ey = p1.y + u2y * tangentLen;
+
+        // 6. Center Calculation (Bisector Method)
+        const bx = u1x + u2x;
+        const by = u1y + u2y;
+        const bLen = Math.hypot(bx, by);
+
+        if (bLen < 0.001) return null; // Collinear points
+
+        const bisectorX = bx / bLen;
+        const bisectorY = by / bLen;
+        const distToCenter = radius / Math.sin(halfAngle);
+        
+        const cx = p1.x + bisectorX * distToCenter;
+        const cy = p1.y + bisectorY * distToCenter;
+
+        // 7. Arc Angles
+        const startAngle = Math.atan2(sy - cy, sx - cx);
+        let endAngle = Math.atan2(ey - cy, ex - cx);
+
+        // 8. Winding Order
+        const cross = u1x * u2y - u1y * u2x;
+        const ccw = cross < 0; 
+
+        // Normalize Sweep
+        let sweep = endAngle - startAngle;
+        if (ccw) {
+            if (sweep > 0) sweep -= Math.PI * 2;
+        } else {
+            if (sweep < 0) sweep += Math.PI * 2;
         }
+        endAngle = startAngle + sweep;
 
-        // Calculate desired tangent for each corner
-        for (let i = 1; i < len - 1; i++) {
-            const progress = i / (len - 1);
-            const pDist = Math.hypot(pointerRef.current.x - points[i].x, pointerRef.current.y - points[i].y);
-            const rounding = resolveParam(params.pathRounding, 'pathRounding', stroke, points[i].pressure, pDist, centerDist, influenceRadius, progress, i);
-            
-            // rounding 0 -> 0 tangent
-            // rounding 1 -> 0.5 * minLen (classic round)
-            // rounding 2 -> 1.0 * minLen (max round, potentially full segment)
-            const factor = rounding * 0.5; 
-            const minLen = Math.min(segLengths[i-1], segLengths[i]);
-            tangents[i] = factor * minLen;
-        }
+        return { cx, cy, radius, startAngle, endAngle, sx, sy, ex, ey, ccw };
+    };
 
-        // PHASE 2: Constraint Solving (Resolve Overlaps)
-        // Check every segment. If sum of tangents > segment length, scale down.
-        // We enforce a small margin (0.1px) to prevent floating point overlaps causing loops.
-        for (let i = 0; i < len - 1; i++) {
-            const tStart = tangents[i];     // Tangent exiting point i
-            const tEnd = tangents[i+1];     // Tangent entering point i+1
-            const maxLen = segLengths[i] - 0.1; // Safety gap
-
-            if (tStart + tEnd > maxLen && maxLen > 0) {
-                const scale = maxLen / (tStart + tEnd);
-                tangents[i] *= scale;
-                tangents[i+1] *= scale;
+    const tracePath = (ctx: CanvasRenderingContext2D, stroke: Stroke, closePath: boolean) => {
+        // FILTERING: Remove duplicate points or points too close together to fix detection issues
+        const rawPoints = stroke.points;
+        if (rawPoints.length < 2) return;
+        
+        const points: Point[] = [rawPoints[0]];
+        for (let k = 1; k < rawPoints.length; k++) {
+            const last = points[points.length - 1];
+            const curr = rawPoints[k];
+            const d = Math.hypot(curr.x - last.x, curr.y - last.y);
+            if (d > 0.1) {
+                points.push(curr);
             }
         }
+        
+        const len = points.length;
+        if (len < 2) return;
 
-        // PHASE 3: Render
+        ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
-        let lastX = points[0].x;
-        let lastY = points[0].y;
 
-        for (let i = 1; i < len - 1; i++) {
-            const p0 = points[i - 1]; 
-            const p1 = points[i]; 
-            const p2 = points[i + 1];
-            const t = tangents[i];
+        const centerDist = Math.hypot(pointerRef.current.x - stroke.center.x, pointerRef.current.y - stroke.center.y);
+        const influenceRadius = stroke.params.mouseInfluenceRadius || 150;
+        
+        const rawRounding = resolveParam(stroke.params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, influenceRadius, 0.5, 0);
+        // We pass the raw Rounding (0 to 2) to the geometry function
+        const roundingParam = Math.max(0, rawRounding);
 
-            if (t <= 0.1) {
-                // Sharp corner
-                ctx.lineTo(p1.x, p1.y);
-                lastX = p1.x; lastY = p1.y;
-            } else {
-                // Calculate actual radius from constrained tangent
-                // Angle between vectors
-                const v1x = p0.x - p1.x; const v1y = p0.y - p1.y;
-                const v2x = p2.x - p1.x; const v2y = p2.y - p1.y;
-                const l1 = Math.hypot(v1x, v1y); const l2 = Math.hypot(v2x, v2y);
+        if (roundingParam <= 0.01) {
+            for (let i = 1; i < len; i++) ctx.lineTo(points[i].x, points[i].y);
+            if (closePath) ctx.closePath();
+        } else {
+            // Draw internal corners
+            for (let i = 1; i < len - 1; i++) {
+                // Determine if segments connect to terminals (open ends)
+                // P[i-1] is start terminal if i-1 == 0 AND !closePath
+                const isStartTerminal = (i - 1 === 0) && !closePath;
+                // P[i+1] is end terminal if i+1 == len-1 AND !closePath
+                const isEndTerminal = (i + 1 === len - 1) && !closePath;
+
+                const geom = getCornerGeometry(points[i-1], points[i], points[i+1], roundingParam, isStartTerminal, isEndTerminal);
                 
-                // Avoid divide by zero
-                if (l1 < 0.1 || l2 < 0.1) {
-                    ctx.lineTo(p1.x, p1.y);
-                    continue;
+                if (geom) {
+                    ctx.lineTo(geom.sx, geom.sy);
+                    // Use calculated radius for perfect fit
+                    // arcTo(controlX, controlY, endX, endY, radius)
+                    // We use geometry.ex as target because math guarantees it lies on P1->P2
+                    ctx.arcTo(points[i].x, points[i].y, geom.ex, geom.ey, geom.radius);
+                } else {
+                    ctx.lineTo(points[i].x, points[i].y);
+                }
+            }
+            
+            if (closePath) {
+                // Wrap-around corners (Never terminal in a closed loop)
+                const geomLast = getCornerGeometry(points[len-2], points[len-1], points[0], roundingParam, false, false);
+                if (geomLast) {
+                    ctx.lineTo(geomLast.sx, geomLast.sy);
+                    ctx.arcTo(points[len-1].x, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius);
+                } else {
+                    ctx.lineTo(points[len-1].x, points[len-1].y);
                 }
 
-                const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
-                const clampedDot = Math.max(-0.99, Math.min(0.99, dot));
-                // Radius = Tangent * tan(theta/2) = Tangent * sqrt((1-cos)/(1+cos))
-                let R = t * Math.sqrt((1 - clampedDot) / (1 + clampedDot));
-                if (R > 5000) R = 5000;
-
-                ctx.arcTo(p1.x, p1.y, p2.x, p2.y, R);
-                
-                // Update tracker
-                lastX = p1.x + (v2x / l2) * t; 
-                lastY = p1.y + (v2y / l2) * t;
+                const geomFirst = getCornerGeometry(points[len-1], points[0], points[1], roundingParam, false, false);
+                if (geomFirst) {
+                    ctx.lineTo(geomFirst.sx, geomFirst.sy);
+                    ctx.arcTo(points[0].x, points[0].y, geomFirst.ex, geomFirst.ey, geomFirst.radius);
+                } else {
+                    ctx.lineTo(points[0].x, points[0].y);
+                }
+                ctx.closePath();
+            } else {
+                ctx.lineTo(points[len-1].x, points[len-1].y);
             }
         }
-        
-        // Connect to last point
-        ctx.lineTo(points[len - 1].x, points[len - 1].y);
-        if (closePath) ctx.closePath();
     };
 
     if (P.gridConfig.visible && P.gridConfig.enabled) {
@@ -624,7 +729,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       if (params.opacity > 0 && params.strokeWidth > 0) {
         ctx.lineCap = params.lineCap || 'round'; ctx.lineJoin = 'round'; ctx.globalCompositeOperation = params.blendMode;
         if (params.blurStrength > 0 && !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth) { ctx.filter = `blur(${params.blurStrength}px)`; } else { ctx.filter = 'none'; }
-        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth && !params.modulations?.opacity && !params.modulations?.hueShift; 
+        
+        const isModActive = (m?: any) => m && m.source !== 'none';
+        const canBatchDraw = !params.smoothModulation && 
+                             params.strokeGradientType === 'linear' && 
+                             !isModActive(params.modulations?.strokeWidth) && 
+                             !isModActive(params.modulations?.opacity) && 
+                             !isModActive(params.modulations?.hueShift);
 
         if (canBatchDraw) {
             const bounds = getStrokeBounds(stroke); const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180; const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
@@ -640,88 +751,140 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             if (params.glowStrength > 0) { ctx.shadowColor = strokeStyle as string; ctx.shadowBlur = params.glowStrength; }
             ctx.strokeStyle = strokeStyle; ctx.lineWidth = params.strokeWidth; ctx.globalAlpha = params.opacity; ctx.stroke(); ctx.shadowBlur = 0;
         } else {
-            // Manual segment drawing for modulated properties (e.g. Hue Shift per segment)
-            // We use the SAME Tangent Constraint System locally to ensure geometric consistency
-            
+            // --- MANUAL SEGMENT DRAWING (Modulated) ---
+            const rawPoints = stroke.points;
+            if (rawPoints.length < 2) return;
+            const points: Point[] = [rawPoints[0]];
+            for (let k = 1; k < rawPoints.length; k++) {
+                const last = points[points.length - 1];
+                const curr = rawPoints[k];
+                const d = Math.hypot(curr.x - last.x, curr.y - last.y);
+                if (d > 0.1) points.push(curr);
+            }
             const len = points.length;
-            const tangents = new Float32Array(len);
-            const segLengths = new Float32Array(len - 1);
 
-            // 1. Calculate lengths
-            for (let i = 0; i < len - 1; i++) {
-                segLengths[i] = Math.hypot(points[i+1].x - points[i].x, points[i+1].y - points[i].y);
-            }
+            const rawRounding = resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, influenceRadius, 0.5, 0);
+            const roundingRatio = Math.max(0, rawRounding);
 
-            // 2. Calculate ideal tangents
-            for (let i = 1; i < len - 1; i++) {
-                const progress = i / (len - 1);
-                const pDist = Math.hypot(pointerRef.current.x - points[i].x, pointerRef.current.y - points[i].y);
-                const rounding = resolveParam(params.pathRounding, 'pathRounding', stroke, points[i].pressure, pDist, centerDist, influenceRadius, progress, i);
-                const factor = rounding * 0.5; 
-                const minLen = Math.min(segLengths[i-1], segLengths[i]);
-                tangents[i] = factor * minLen;
-            }
+            let currentX = points[0].x;
+            let currentY = points[0].y;
 
-            // 3. Solve Constraints
-            for (let i = 0; i < len - 1; i++) {
-                const tStart = tangents[i]; const tEnd = tangents[i+1];
-                const maxLen = segLengths[i] - 0.1; // Safety gap
-                if (tStart + tEnd > maxLen && maxLen > 0) {
-                    const scale = maxLen / (tStart + tEnd);
-                    tangents[i] *= scale;
-                    tangents[i+1] *= scale;
-                }
-            }
+            if (points.length > 1) {
+                const loopLimit = params.closePath ? points.length : points.length - 1;
 
-            let lastX = points[0].x;
-            let lastY = points[0].y;
+                for (let i = 1; i <= loopLimit; i++) {
+                    const p0 = points[(i - 1) % points.length];
+                    const p1 = points[i % points.length];
+                    const p2 = points[(i + 1) % points.length];
+                    
+                    const isStartTerminal = (i - 1 === 0) && !params.closePath;
+                    const isEndTerminal = (i + 1 === points.length - 1) && !params.closePath;
 
-            for (let i = 1; i < points.length; i++) {
-                const p1 = points[i]; const progress = i / (points.length - 1); const pDist = Math.hypot(pointerRef.current.x - p1.x, pointerRef.current.y - p1.y);
-                const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i);
-                const opacity = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i);
-                const blur = resolveParam(params.blurStrength, 'blurStrength', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i);
-                ctx.lineWidth = width; ctx.globalAlpha = opacity;
-                if (params.glowStrength > 0) { ctx.shadowColor = params.color; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
-                if (blur > 0) { ctx.filter = `blur(${blur}px)`; } else { ctx.filter = 'none'; }
-                if (params.gradient.enabled) {
-                    if (params.strokeGradientType === 'path') {
-                        const midpoint = params.strokeGradientMidpoint ?? 0.5; const warpedT = warpOffset(progress, midpoint); ctx.strokeStyle = interpolateColors(params.gradient.colors, warpedT);
-                    } else {
-                         const bounds = getStrokeBounds(stroke); const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180; const rx = p1.x - bounds.cx; const ry = p1.y - bounds.cy; const proj = rx * Math.cos(angleRad) + ry * Math.sin(angleRad); const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2; const t = 0.5 + (proj / (r * 2)); const midpoint = params.strokeGradientMidpoint ?? 0.5; const warpedT = warpOffset(Math.max(0, Math.min(1, t)), midpoint); ctx.strokeStyle = interpolateColors(params.gradient.colors, warpedT);
-                    }
-                } else {
+                    const geom = getCornerGeometry(p0, p1, p2, roundingRatio, isStartTerminal, isEndTerminal);
+                    
+                    const endX = geom ? geom.sx : p1.x;
+                    const endY = geom ? geom.sy : p1.y;
+                    
+                    const pDist = Math.hypot(pointerRef.current.x - p0.x, pointerRef.current.y - p0.y);
+                    const progress = (i-1) / points.length;
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
                     let c = params.color;
-                    if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { let shift = params.hueShift; if (params.modulations?.hueShift) { shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, pDist, centerDist, influenceRadius, progress, i); } else if (params.hueShift !== 0) { shift = params.hueShift; } if (params.audioToColor && P.isMicEnabled) { shift += (audioManager.getGlobalAudioData().mid / 255) * 180; } c = getShiftedColor(c, shift); }
+                    if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
+                         let shift = params.hueShift;
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
+                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
+                         c = getShiftedColor(c, shift);
+                    }
+                    
+                    if (params.glowStrength > 0) { ctx.shadowColor = c; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
                     ctx.strokeStyle = c;
-                }
-                
-                ctx.beginPath(); 
-                ctx.moveTo(lastX, lastY);
-                
-                const t = tangents[i]; // Tangent for THIS corner (point i)
-                
-                // Is this point an arc?
-                if (i < len - 1 && t > 0.1) {
-                    const p0 = points[i-1]; const p2 = points[i+1]; // p1 is current
+                    ctx.lineWidth = Math.max(0.1, width);
+                    ctx.globalAlpha = opacity;
+                    ctx.lineCap = 'round';
                     
-                    const v1x = p0.x - p1.x; const v1y = p0.y - p1.y;
-                    const v2x = p2.x - p1.x; const v2y = p2.y - p1.y;
-                    const l1 = Math.hypot(v1x, v1y); const l2 = Math.hypot(v2x, v2y);
-                    const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
-                    const clampedDot = Math.max(-0.99, Math.min(0.99, dot));
-                    let R = t * Math.sqrt((1 - clampedDot) / (1 + clampedDot));
-                    if (R > 5000) R = 5000;
+                    ctx.beginPath();
+                    ctx.moveTo(currentX, currentY);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+                    
+                    if (geom) {
+                        const steps = 8;
+                        let totalSweep = geom.endAngle - geom.startAngle;
+                        
+                        if (geom.ccw) {
+                            if (totalSweep > 0) totalSweep -= Math.PI * 2;
+                        } else {
+                            if (totalSweep < 0) totalSweep += Math.PI * 2;
+                        }
 
-                    ctx.arcTo(p1.x, p1.y, p2.x, p2.y, R);
-                    
-                    lastX = p1.x + (v2x / l2) * t;
-                    lastY = p1.y + (v2y / l2) * t;
-                } else {
-                    ctx.lineTo(p1.x, p1.y);
-                    lastX = p1.x; lastY = p1.y;
+                        let prevArcX = geom.sx;
+                        let prevArcY = geom.sy;
+                        
+                        for (let s = 1; s <= steps; s++) {
+                            const t = s / steps;
+                            const angle = geom.startAngle + totalSweep * t;
+                            const bx = geom.cx + Math.cos(angle) * geom.radius;
+                            const by = geom.cy + Math.sin(angle) * geom.radius;
+                            
+                            const p1Dist = Math.hypot(pointerRef.current.x - bx, pointerRef.current.y - by);
+                            const p1Prog = i / points.length;
+                            
+                            const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i);
+                            const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i);
+                            let cArc = params.color;
+                            
+                            if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { 
+                                let shift = params.hueShift; 
+                                if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i); 
+                                if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180; 
+                                cArc = getShiftedColor(cArc, shift); 
+                            }
+
+                            if (params.glowStrength > 0) { ctx.shadowColor = cArc; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
+                            ctx.strokeStyle = cArc;
+                            ctx.lineWidth = Math.max(0.1, wArc);
+                            ctx.globalAlpha = oArc;
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(prevArcX, prevArcY);
+                            ctx.lineTo(bx, by);
+                            ctx.stroke();
+                            
+                            prevArcX = bx;
+                            prevArcY = by;
+                        }
+                        currentX = prevArcX; // Should match geom.ex
+                        currentY = prevArcY;
+                    } else {
+                        currentX = p1.x;
+                        currentY = p1.y;
+                    }
                 }
-                ctx.stroke();
+                
+                if (!params.closePath) {
+                    const lastIdx = points.length - 1;
+                    const pLast = points[lastIdx];
+                    
+                    const pDist = Math.hypot(pointerRef.current.x - pLast.x, pointerRef.current.y - pLast.y);
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
+                    let c = params.color;
+                    if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
+                         let shift = params.hueShift;
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
+                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
+                         c = getShiftedColor(c, shift);
+                    }
+                    
+                    ctx.strokeStyle = c;
+                    ctx.lineWidth = Math.max(0.1, width);
+                    ctx.globalAlpha = opacity;
+                    ctx.beginPath();
+                    ctx.moveTo(currentX, currentY);
+                    ctx.lineTo(pLast.x, pLast.y);
+                    ctx.stroke();
+                }
             }
         }
         ctx.filter = 'none';
