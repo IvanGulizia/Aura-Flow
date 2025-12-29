@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Filter, X, Save, Download, FolderOpen } from 'lucide-react';
 import { SectionHeader } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
@@ -16,16 +16,24 @@ interface PresetsSectionProps extends BaseSectionProps {
   triggerImportPresets: () => void;
   saveNewPreset: (name: string, desc: string) => void;
   setShowModifiedOnly: (val: boolean) => void;
+  forceNamingTrigger?: number;
 }
 
 export const PresetsSection: React.FC<PresetsSectionProps> = ({ 
   isOpen, onToggle, presets, activePresetName, loadPreset, deletePreset, 
   exportPresets, exportSinglePreset, triggerImportPresets, saveNewPreset,
-  showModifiedOnly, setShowModifiedOnly
+  showModifiedOnly, setShowModifiedOnly, forceNamingTrigger
 }) => {
   const [isNamingPreset, setIsNamingPreset] = useState(false);
   const [newPresetName, setNewPresetName] = useState("");
   const [newPresetDesc, setNewPresetDesc] = useState("");
+
+  useEffect(() => {
+    if (forceNamingTrigger && forceNamingTrigger > 0) {
+      setIsNamingPreset(true);
+      setNewPresetName(`Preset ${presets.length + 1}`);
+    }
+  }, [forceNamingTrigger]);
 
   return (
     <>

@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { Stroke, SimulationParams, SoundConfig, GlobalForceType, GlobalToolConfig, GridConfig, SymmetryConfig, Point, Connection, PointReference, ProjectData } from '../types';
 import { audioManager } from '../services/audioService';
@@ -139,7 +140,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const canvas = containerRef.current; 
     if (!canvas) return;
     const handleNativePointerDown = (e: PointerEvent) => {
-        e.preventDefault();
+        if (e.button !== 0) return;
         const P = latestProps.current;
         if (P.onCanvasInteraction) P.onCanvasInteraction();
         try { (e.target as Element).setPointerCapture(e.pointerId); } catch(err){}
@@ -212,8 +213,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             newStrokes.push(stroke);
 
             if (stroke.params.autoLinkStart) {
-                const centerDist = 10000;
-                const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, 0.5, 10000, centerDist, 150, 0, 0);
+                const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0);
                 const closest = getClosestPoint(p.x, p.y, radius, [strokeId]);
                 if (closest) {
                     connectionsRef.current.push({
@@ -311,8 +311,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (stroke.params.autoLinkEnd && stroke.points.length > 1) {
                     const lastIdx = stroke.points.length - 1;
                     const p = stroke.points[lastIdx];
-                    const centerDist = Math.hypot(stroke.center.x - p.x, stroke.center.y - p.y);
-                    const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, p.pressure, 10000, centerDist, 150, 1, lastIdx);
+                    const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, p.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
                     const closest = getClosestPoint(p.x, p.y, radius, [stroke.id]);
                     if (closest) {
                         connectionsRef.current.push({
@@ -469,7 +468,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         needsRedrawRef.current = true;
       });
   };
-  const resolveParam = (baseValue: number, key: keyof SimulationParams, stroke: Stroke, pointPressure: number, cursorDistPoint: number, cursorDistCenter: number, cursorRadius: number, progress: number, pointIndex: number): number => {
+  const resolveParam = (baseValue: number, key: keyof SimulationParams, stroke: Stroke, pointPressure: number, pointerX: number, pointerY: number, progress: number, pointIndex: number): number => {
     const config = stroke.params.modulations?.[key]; if (!config) return baseValue; const { source, min, max, easing, scope } = config; if (source === 'none') return baseValue; let t = 0; const isScopePoint = scope === 'point';
     switch (source) {
       case 'random': t = isScopePoint ? getPseudoRandom(stroke.randomSeed + pointIndex * 0.1, key as string) : getPseudoRandom(stroke.randomSeed, key as string); break;
@@ -478,14 +477,25 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       case 'time': case 'time-pulse': case 'time-step': const dir = config.invertDirection ? -1 : 1; const speedVal = config.speed ?? 1; let timeFactor = timeRef.current * speedVal; if (config.speedStrategy === 'duration' && speedVal > 0) timeFactor = timeRef.current / speedVal; const phaseOffset = isScopePoint ? (config.speedStrategy === 'duration' ? progress : pointIndex * 0.05) : 0; if (source === 'time') { t = (timeFactor * dir + phaseOffset) % 1; if (t < 0) t += 1; } else if (source === 'time-pulse') { const duty = config.paramA ?? 0.5; const edge = Math.min(0.2, config.paramB ?? 0.1); const cycleLen = 1 + (config.paramC ?? 0); const rawPulse = (timeFactor * dir + phaseOffset) % cycleLen; let normPulse = rawPulse < 0 ? rawPulse + cycleLen : rawPulse; if (normPulse > 1) t = 0; else if (normPulse < edge) t = normPulse / edge; else if (normPulse < duty) t = 1; else if (normPulse < duty + edge) t = 1 - (normPulse - duty) / edge; else t = 0; } else if (source === 'time-step') { const steps = 4; let rawStep = (timeFactor * dir + phaseOffset) % 1; if (rawStep < 0) rawStep += 1; t = Math.floor(rawStep * steps) / (steps - 1); } break;
       case 'velocity': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
       case 'pressure': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
-      case 'cursor': const dist = isScopePoint ? cursorDistPoint : cursorDistCenter; t = (dist < cursorRadius) ? 1 - (dist / cursorRadius) : 0; break;
+      case 'cursor': 
+        const targetX = isScopePoint ? stroke.points[pointIndex].x : stroke.center.x;
+        const targetY = isScopePoint ? stroke.points[pointIndex].y : stroke.center.y;
+        const dx = pointerX - targetX;
+        const dy = pointerY - targetY;
+        const axis = config.paramB ?? 0; // 0: Radial, 1: X, 2: Y
+        if (axis === 1) t = Math.abs(dx);
+        else if (axis === 2) t = Math.abs(dy);
+        else t = Math.sqrt(dx*dx + dy*dy);
+        break;
       case 'path': t = progress; break;
       case 'path-mirror': t = 1 - Math.abs((progress - 0.5) * 2); break;
       case 'path-mirror-inv': t = Math.abs((progress - 0.5) * 2); break;
       case 'audio-live': t = audioManager.getGlobalAudioData().average / 255; break;
       case 'audio-sample': t = audioManager.getStrokeAmplitude(stroke.id); break;
     }
-    const inMin = config.inputMin ?? 0; const inMax = config.inputMax ?? 1; if (inMax > inMin) t = (t - inMin) / (inMax - inMin); t = Math.max(0, Math.min(1, t)); const easedT = applyEasing(t, easing, config); return min + (max - min) * easedT;
+    const inMin = config.inputMin ?? 0; const inMax = config.inputMax ?? (source === 'cursor' ? 500 : 1); 
+    if (inMax > inMin) t = (t - inMin) / (inMax - inMin); 
+    t = Math.max(0, Math.min(1, t)); const easedT = applyEasing(t, easing, config); return min + (max - min) * easedT;
   };
   const getProjectedPosition = (stroke: Stroke, px: number, py: number): number => { let minDistSq = Infinity; let closestIdx = 0; for(let i=0; i<stroke.points.length; i++) { const dSq = (stroke.points[i].x - px)**2 + (stroke.points[i].y - py)**2; if (dSq < minDistSq) { minDistSq = dSq; closestIdx = i; } } return closestIdx / (stroke.points.length - 1 || 1); };
   const updatePhysics = () => {
@@ -498,7 +508,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const hasPointer = pointerRef.current.x > -100;
     pointerRef.current.lastX = pointerX; pointerRef.current.lastY = pointerY;
 
-    if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && P.globalForceTool !== 'cursor' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) { const influenceRadius = P.globalToolConfig.radius; const strength = P.globalToolConfig.force * 2; const falloffExp = P.globalToolConfig.falloff ? (1 + P.globalToolConfig.falloff * 2) : 1; strokesRef.current.forEach(stroke => { stroke.points.forEach(p => { const dx = pointerX - p.x; const dy = pointerY - p.y; const dSq = dx*dx + dy*dy; if (dSq < influenceRadius * influenceRadius) { const dist = Math.sqrt(dSq); const forceMag = Math.pow(1 - (dist / influenceRadius), falloffExp) * strength; if (P.globalForceTool === 'repulse') { p.vx -= (dx / dist) * forceMag; p.vy -= (dy / dist) * forceMag; } else if (P.globalForceTool === 'attract') { p.vx += (dx / dist) * forceMag; p.vy += (dy / dist) * forceMag; } else if (P.globalForceTool === 'vortex') { p.vx += (-dy / dist) * forceMag; p.vy += (dx / dist) * forceMag; } } }); }); }
+    if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && P.globalForceTool !== 'cursor' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) { const influenceRadius = P.globalToolConfig.radius; const strength = P.globalToolConfig.force * 2; const falloffExp = P.globalToolConfig.falloff ? (1 + P.globalToolConfig.falloff * 2) : 1; strokesRef.current.forEach(stroke => { stroke.points.forEach(p => { const dx = pointerX - p.x; const dy = pointerY - p.y; const dSq = dx*dx + dy*dy; if (dSq < influenceRadius * influenceRadius) { const dist = Math.sqrt(dSq); const forceMag = Math.pow(1 - (dist / influenceRadius), falloffExp) * strength; if (P.globalForceTool === 'repulse') { p.vx -= (dx / dist) * forceMag; p.vy -= (dy / dist) * forceMag; } else if (P.globalForceTool === 'attract') { p.vx += (dx / dist) * forceMag; p.vy += (dx / dist) * forceMag; } else if (P.globalForceTool === 'vortex') { p.vx += (-dy / dist) * forceMag; p.vy += (dx / dist) * forceMag; } } }); }); }
     
     for (let i = connectionsRef.current.length - 1; i >= 0; i--) { 
         const conn = connectionsRef.current[i]; 
@@ -512,16 +522,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 const dy = p2.y - p1.y; 
                 const dist = Math.sqrt(dx*dx + dy*dy); 
                 if (dist > 0.1) { 
-                    const centerDist = hasPointer ? Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y) : 10000;
-                    const p1Dist = hasPointer ? Math.hypot(pointerX - p1.x, pointerY - p1.y) : 10000;
                     const progress = conn.from.pointIndex / (s1.points.length - 1 || 1);
-
-                    const currentMouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, p1.pressure, p1Dist, centerDist, 150, progress, conn.from.pointIndex);
-                    const stiffness = resolveParam(s1.params.autoLinkStiffness, 'autoLinkStiffness', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
-                    const breakingForce = resolveParam(s1.params.autoLinkBreakingForce, 'autoLinkBreakingForce', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
-                    const bias = resolveParam(s1.params.autoLinkBias, 'autoLinkBias', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
-                    const influence = Math.round(resolveParam(s1.params.autoLinkInfluence, 'autoLinkInfluence', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex));
-                    const falloff = resolveParam(s1.params.autoLinkFalloff, 'autoLinkFalloff', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
+                    const currentMouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex);
+                    const stiffness = resolveParam(s1.params.autoLinkStiffness, 'autoLinkStiffness', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex);
+                    const breakingForce = resolveParam(s1.params.autoLinkBreakingForce, 'autoLinkBreakingForce', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex);
+                    const bias = resolveParam(s1.params.autoLinkBias, 'autoLinkBias', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex);
+                    const influence = Math.round(resolveParam(s1.params.autoLinkInfluence, 'autoLinkInfluence', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex));
+                    const falloff = resolveParam(s1.params.autoLinkFalloff, 'autoLinkFalloff', s1, p1.pressure, pointerX, pointerY, progress, conn.from.pointIndex);
                     const decayEasing = s1.params.autoLinkDecayEasing;
 
                     const diff = dist - conn.length; 
@@ -561,19 +568,17 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     for (let i = 0; i < strokesRef.current.length; i++) {
         const s1 = strokesRef.current[i];
         if (s1.points.length < 2) continue;
-        const s1CenterDist = hasPointer ? Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y) : 10000;
-        
-        const s1MouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, 0.5, 10000, s1CenterDist, 150, 0.5, 0);
-        const r = resolveParam(s1.params.neighborRadius, 'neighborRadius', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
-        const alignF = resolveParam(s1.params.alignmentForce, 'alignmentForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
-        const cohF = resolveParam(s1.params.cohesionForce, 'cohesionForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
-        const repF = resolveParam(s1.params.repulsionForce, 'repulsionForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
-        const swarmCursorInf = resolveParam(s1.params.swarmCursorInfluence, 'swarmCursorInfluence', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        const s1MouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, 0.5, pointerX, pointerY, 0.5, 0);
+        const r = resolveParam(s1.params.neighborRadius, 'neighborRadius', s1, 0.5, pointerX, pointerY, 0.5, 0);
+        const alignF = resolveParam(s1.params.alignmentForce, 'alignmentForce', s1, 0.5, pointerX, pointerY, 0.5, 0);
+        const cohF = resolveParam(s1.params.cohesionForce, 'cohesionForce', s1, 0.5, pointerX, pointerY, 0.5, 0);
+        const repF = resolveParam(s1.params.repulsionForce, 'repulsionForce', s1, 0.5, pointerX, pointerY, 0.5, 0);
+        const swarmCursorInf = resolveParam(s1.params.swarmCursorInfluence, 'swarmCursorInfluence', s1, 0.5, pointerX, pointerY, 0.5, 0);
         
         if (r <= 0 || (alignF === 0 && cohF === 0 && repF === 0)) continue;
         let influenceFactor = 1;
         if (swarmCursorInf > 0 && hasPointer) {
-            const distToCursor = s1CenterDist;
+            const distToCursor = Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y);
             influenceFactor = distToCursor > s1MouseRadius ? 0 : 1 - (distToCursor / s1MouseRadius);
             influenceFactor = 1 * (1 - swarmCursorInf) + influenceFactor * swarmCursorInf;
         }
@@ -632,25 +637,21 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       for (let j = 0; j < stroke.points.length; j++) { 
           const p = stroke.points[j]; 
           const progress = j / (len - 1 || 1); 
-          const pDist = hasPointer ? Math.hypot(pointerX - p.x, pointerY - p.y) : 10000; 
-
-          // Resolve rayon first
-          const currentMouseRadius = resolveParam(stroke.params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p.pressure, pDist, centerDist, 150, progress, j); 
+          const currentMouseRadius = resolveParam(stroke.params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p.pressure, pointerX, pointerY, progress, j); 
           
-          // Resolve others using the dynamic radius
-          const mass = resolveParam(stroke.params.mass, 'mass', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const friction = resolveParam(stroke.params.friction, 'friction', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const tension = resolveParam(stroke.params.tension, 'tension', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const wiggleAmp = resolveParam(stroke.params.wiggleAmplitude, 'wiggleAmplitude', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const wiggleFreq = resolveParam(stroke.params.wiggleFrequency, 'wiggleFrequency', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const waveSpd = resolveParam(stroke.params.waveSpeed, 'waveSpeed', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const mouseRep = resolveParam(stroke.params.mouseRepulsion, 'mouseRepulsion', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const mouseAttr = resolveParam(stroke.params.mouseAttraction, 'mouseAttraction', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const mouseFall = resolveParam(stroke.params.mouseFalloff, 'mouseFalloff', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const viscosity = resolveParam(stroke.params.viscosity, 'viscosity', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const elasticity = resolveParam(stroke.params.elasticity, 'elasticity', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const rGravX = resolveParam(stroke.params.gravityX, 'gravityX', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
-          const rGravY = resolveParam(stroke.params.gravityY, 'gravityY', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const mass = resolveParam(stroke.params.mass, 'mass', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const friction = resolveParam(stroke.params.friction, 'friction', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const tension = resolveParam(stroke.params.tension, 'tension', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const wiggleAmp = resolveParam(stroke.params.wiggleAmplitude, 'wiggleAmplitude', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const wiggleFreq = resolveParam(stroke.params.wiggleFrequency, 'wiggleFrequency', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const waveSpd = resolveParam(stroke.params.waveSpeed, 'waveSpeed', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const mouseRep = resolveParam(stroke.params.mouseRepulsion, 'mouseRepulsion', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const mouseAttr = resolveParam(stroke.params.mouseAttraction, 'mouseAttraction', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const mouseFall = resolveParam(stroke.params.mouseFalloff, 'mouseFalloff', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const viscosity = resolveParam(stroke.params.viscosity, 'viscosity', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const elasticity = resolveParam(stroke.params.elasticity, 'elasticity', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const rGravX = resolveParam(stroke.params.gravityX, 'gravityX', stroke, p.pressure, pointerX, pointerY, progress, j); 
+          const rGravY = resolveParam(stroke.params.gravityY, 'gravityY', stroke, p.pressure, pointerX, pointerY, progress, j); 
 
           const invMass = 1 / Math.max(0.1, mass); 
           const frictionFactor = friction * (1 - viscosity * 0.1); 
@@ -673,8 +674,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
           p.vx += fx * invMass; 
           p.vy += fy * invMass; 
 
+          const dx = pointerX - p.x; const dy = pointerY - p.y;
+          const pDist = Math.hypot(dx, dy);
           if (hasPointer && pDist < currentMouseRadius) { 
-              const dx = pointerX - p.x; const dy = pointerY - p.y; 
               const force = Math.pow(1 - (pDist / currentMouseRadius), mouseFall); 
               if (mouseRep > 0) { p.vx -= (dx / pDist) * force * mouseRep; p.vy -= (dy / pDist) * force * mouseRep; } 
               if (mouseAttr > 0) { p.vx += (dx / pDist) * force * mouseAttr; p.vy += (dy / pDist) * force * mouseAttr; } 
@@ -706,6 +708,43 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     ctx.save();
     const { scale, x, y } = viewTransformRef.current;
     if (scale !== 1 || x !== 0 || y !== 0) { ctx.translate(x, y); ctx.scale(scale, scale); }
+    
+    const tracePath = (ctx: CanvasRenderingContext2D, stroke: Stroke, closePath: boolean) => {
+        const rawPoints = stroke.points;
+        if (rawPoints.length < 2) return;
+        const points: Point[] = [rawPoints[0]];
+        for (let k = 1; k < rawPoints.length; k++) {
+            const last = points[points.length - 1];
+            const curr = rawPoints[k];
+            const d = Math.hypot(curr.x - last.x, curr.y - last.y);
+            if (d > 0.1) points.push(curr);
+        }
+        const len = points.length;
+        if (len < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        const roundingParam = resolveParam(stroke.params.pathRounding, 'pathRounding', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0);
+        
+        if (roundingParam <= 0.01) {
+            for (let i = 1; i < len; i++) ctx.lineTo(points[i].x, points[i].y);
+            if (closePath) ctx.closePath();
+        } else {
+            for (let i = 1; i < len - 1; i++) {
+                const isStartTerminal = (i - 1 === 0) && !closePath;
+                const isEndTerminal = (i + 1 === len - 1) && !closePath;
+                const geom = getCornerGeometry(points[i-1], points[i], points[i+1], roundingParam, isStartTerminal, isEndTerminal);
+                if (geom) { ctx.lineTo(geom.sx, geom.sy); ctx.arcTo(points[i].x, points[i].y, geom.ex, geom.ey, geom.radius); } else { ctx.lineTo(points[i].x, points[i].y); }
+            }
+            if (closePath) {
+                const geomLast = getCornerGeometry(points[len-2], points[len-1], points[0], roundingParam, false, false);
+                if (geomLast) { ctx.lineTo(geomLast.sx, geomLast.sy); ctx.arcTo(points[len-1].x, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius); } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
+                const geomFirst = getCornerGeometry(points[len-1], points[0], points[1], roundingParam, false, false);
+                if (geomFirst) { ctx.lineTo(geomFirst.sx, geomFirst.sy); ctx.arcTo(points[0].x, points[0].y, geomFirst.ex, geomFirst.ey, geomFirst.radius); } else { ctx.lineTo(points[0].x, points[0].y); }
+                ctx.closePath();
+            } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
+        }
+    };
+    
     const getCornerGeometry = (p0: Point, p1: Point, p2: Point, rawRounding: number, isStartTerminal: boolean, isEndTerminal: boolean) => {
         const dx1 = p0.x - p1.x, dy1 = p0.y - p1.y;
         const dx2 = p2.x - p1.x, dy2 = p2.y - p1.y;
@@ -746,43 +785,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         endAngle = startAngle + sweep;
         return { cx, cy, radius, startAngle, endAngle, sx, sy, ex, ey, ccw };
     };
-    const tracePath = (ctx: CanvasRenderingContext2D, stroke: Stroke, closePath: boolean) => {
-        const rawPoints = stroke.points;
-        if (rawPoints.length < 2) return;
-        const points: Point[] = [rawPoints[0]];
-        for (let k = 1; k < rawPoints.length; k++) {
-            const last = points[points.length - 1];
-            const curr = rawPoints[k];
-            const d = Math.hypot(curr.x - last.x, curr.y - last.y);
-            if (d > 0.1) points.push(curr);
-        }
-        const len = points.length;
-        if (len < 2) return;
-        ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        const centerDist = Math.hypot(pointerRef.current.x - stroke.center.x, pointerRef.current.y - stroke.center.y);
-        const rawMouseRadius = resolveParam(stroke.params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, 0.5, 0, centerDist, 150, 0.5, 0);
-        const rawRounding = resolveParam(stroke.params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, rawMouseRadius, 0.5, 0);
-        const roundingParam = Math.max(0, rawRounding);
-        if (roundingParam <= 0.01) {
-            for (let i = 1; i < len; i++) ctx.lineTo(points[i].x, points[i].y);
-            if (closePath) ctx.closePath();
-        } else {
-            for (let i = 1; i < len - 1; i++) {
-                const isStartTerminal = (i - 1 === 0) && !closePath;
-                const isEndTerminal = (i + 1 === len - 1) && !closePath;
-                const geom = getCornerGeometry(points[i-1], points[i], points[i+1], roundingParam, isStartTerminal, isEndTerminal);
-                if (geom) { ctx.lineTo(geom.sx, geom.sy); ctx.arcTo(points[i].x, points[i].y, geom.ex, geom.ey, geom.radius); } else { ctx.lineTo(points[i].x, points[i].y); }
-            }
-            if (closePath) {
-                const geomLast = getCornerGeometry(points[len-2], points[len-1], points[0], roundingParam, false, false);
-                if (geomLast) { ctx.lineTo(geomLast.sx, geomLast.sy); ctx.arcTo(points[len-1].x, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius); } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
-                const geomFirst = getCornerGeometry(points[len-1], points[0], points[1], roundingParam, false, false);
-                if (geomFirst) { ctx.lineTo(geomFirst.sx, geomFirst.sy); ctx.arcTo(points[0].x, points[0].y, geomFirst.ex, geomFirst.ey, geomFirst.radius); } else { ctx.lineTo(points[0].x, points[0].y); }
-                ctx.closePath();
-            } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
-        }
-    };
+
     if (P.gridConfig.visible && P.gridConfig.enabled) {
        ctx.fillStyle = hexToRgba(P.gridConfig.color, P.gridConfig.opacity);
        const cx = canvas.width / 2; const cy = canvas.height / 2; const size = Math.max(10, P.gridConfig.size);
@@ -844,8 +847,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       }
       if (stroke.points.length < 2) return;
       const { params, points, center } = stroke;
-      const centerDist = Math.hypot(pointerRef.current.x - center.x, pointerRef.current.y - center.y);
-      const currentMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, 0.5, 0, centerDist, 150, 0.5, 0);
 
       if (params.fill.enabled) {
           tracePath(ctx, stroke, params.closePath);
@@ -880,6 +881,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             tracePath(ctx, stroke, params.closePath);
             if (params.glowStrength > 0) { ctx.shadowColor = strokeStyle as string; ctx.shadowBlur = params.glowStrength; }
             ctx.strokeStyle = strokeStyle; ctx.lineWidth = params.strokeWidth; ctx.globalAlpha = params.opacity; ctx.stroke(); ctx.shadowBlur = 0;
+            
+            // Draw points if enabled in batch mode
+            if (params.drawPoints) {
+                ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : strokeStyle;
+                const ptSize = Math.max(2, params.strokeWidth / 3);
+                for (const p of stroke.points) { ctx.beginPath(); ctx.arc(p.x, p.y, ptSize, 0, Math.PI * 2); ctx.fill(); }
+            }
         } else {
             const rawPoints = stroke.points;
             if (rawPoints.length < 2) return;
@@ -891,7 +899,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (d > 0.1) points.push(curr);
             }
             const len = points.length;
-            const roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, currentMouseRadius, 0.5, 0));
+            const roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0));
             let currentX = points[0].x;
             let currentY = points[0].y;
             if (points.length > 1) {
@@ -905,16 +913,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     const geom = getCornerGeometry(p0, p1, p2, roundingRatio, isStartTerminal, isEndTerminal);
                     const endX = geom ? geom.sx : p1.x;
                     const endY = geom ? geom.sy : p1.y;
-                    const pDist = Math.hypot(pointerRef.current.x - p0.x, pointerRef.current.y - p0.y);
                     const progress = (i-1) / points.length;
                     
-                    const pointMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p0.pressure, pDist, centerDist, 150, progress, i-1);
-                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
-                    const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
-                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
                          if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
                          c = getShiftedColor(c, shift);
                     }
@@ -927,6 +933,17 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     ctx.moveTo(currentX, currentY);
                     ctx.lineTo(endX, endY);
                     ctx.stroke();
+
+                    // Correctly Draw Points in modulated mode
+                    if (params.drawPoints) {
+                        ctx.save();
+                        ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : c;
+                        ctx.beginPath();
+                        ctx.arc(p0.x, p0.y, Math.max(2, width / 3), 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+
                     if (geom) {
                         const steps = 8;
                         let totalSweep = geom.endAngle - geom.startAngle;
@@ -938,15 +955,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                             const angle = geom.startAngle + totalSweep * t;
                             const bx = geom.cx + Math.cos(angle) * geom.radius;
                             const by = geom.cy + Math.sin(angle) * geom.radius;
-                            const p1Dist = Math.hypot(pointerRef.current.x - bx, pointerRef.current.y - by);
                             const p1Prog = i / points.length;
-                            const arcMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p1.pressure, p1Dist, centerDist, 150, p1Prog, i);
-                            const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i);
-                            const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i);
+                            const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i);
+                            const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i);
                             let cArc = params.color;
                             if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { 
                                 let shift = params.hueShift; 
-                                if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i); 
+                                if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i); 
                                 if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180; 
                                 cArc = getShiftedColor(cArc, shift); 
                             }
@@ -961,24 +976,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (!params.closePath) {
                     const lastIdx = points.length - 1;
                     const pLast = points[lastIdx];
-                    const pDist = Math.hypot(pointerRef.current.x - pLast.x, pointerRef.current.y - pLast.y);
-                    const lastMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, pLast.pressure, pDist, centerDist, 150, 1, lastIdx);
-                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
-                    const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
-                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
                          if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
                          c = getShiftedColor(c, shift);
                     }
                     ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.1, width); ctx.globalAlpha = opacity;
                     ctx.beginPath(); ctx.moveTo(currentX, currentY); ctx.lineTo(pLast.x, pLast.y); ctx.stroke();
+                    
+                    if (params.drawPoints) {
+                        ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : c;
+                        ctx.beginPath();
+                        ctx.arc(pLast.x, pLast.y, Math.max(2, width / 3), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
             }
         }
         ctx.filter = 'none';
-        if (params.drawPoints) { ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : 'rgba(0,0,0,0.2)'; const ptSize = Math.max(2, params.strokeWidth / 3); for (const p of points) { ctx.beginPath(); ctx.arc(p.x, p.y, ptSize, 0, Math.PI * 2); ctx.fill(); } }
       }
       ctx.shadowBlur = 0;
     });

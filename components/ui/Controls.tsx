@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { ChevronDown, Lock, Unlock, Activity, RotateCcw, Shuffle, RefreshCw } from 'lucide-react';
 import { ModulationConfig } from '../../types';
@@ -74,8 +75,10 @@ export const Slider: React.FC<ControlProps & {
 
   const isModulated = modulation && modulation.source !== 'none';
   
+  // ALLOW Manual input to go beyond slider range
   const handleValueChange = (v: number) => {
-    onChange(Math.min(max, Math.max(min, v)));
+    if (isNaN(v)) return;
+    onChange(v);
   };
 
   const handleMinChange = (v: number) => {
@@ -96,10 +99,10 @@ export const Slider: React.FC<ControlProps & {
     
     const onPointerMove = (moveEvent: PointerEvent) => {
       const clientX = moveEvent.clientX;
-      let pct = (clientX - rect.left) / rect.width;
-      pct = Math.max(0, Math.min(1, pct));
+      let pctValue = (clientX - rect.left) / rect.width;
+      pctValue = Math.max(0, Math.min(1, pctValue));
       
-      let rawVal = min + pct * (max - min);
+      let rawVal = min + pctValue * (max - min);
       if (step > 0) {
         rawVal = Math.round(rawVal / step) * step;
       }
@@ -125,7 +128,11 @@ export const Slider: React.FC<ControlProps & {
     window.addEventListener('pointerup', onPointerUp);
   };
   
-  const pct = (v: number) => ((v - min) / (max - min)) * 100;
+  // CALCULATE Visual Percentage (clamped to 0-100 to stay in track)
+  const getPct = (v: number) => {
+    const p = ((v - min) / (max - min)) * 100;
+    return Math.max(0, Math.min(100, p));
+  };
   
   const displayVal = Number.isFinite(value) ? value : min;
   const displayStart = isModulated ? (Number.isFinite(modulation.min) ? modulation.min : min) : min;
@@ -189,14 +196,14 @@ export const Slider: React.FC<ControlProps & {
              <div 
                className="absolute top-0 bottom-0 bg-gradient-to-r from-indigo-200 to-pink-200" 
                style={{ 
-                 left: `${pct(visualMin)}%`, 
-                 right: `${100 - pct(visualMax)}%` 
+                 left: `${getPct(visualMin)}%`, 
+                 right: `${100 - getPct(visualMax)}%` 
                }} 
              />
            ) : (
               <div 
                 className="absolute top-0 bottom-0 bg-slate-300"
-                style={{ width: `${pct(displayVal)}%` }}
+                style={{ width: `${getPct(displayVal)}%` }}
               />
            )}
         </div>
@@ -205,7 +212,7 @@ export const Slider: React.FC<ControlProps & {
           <>
              <div 
                 className="absolute w-4 h-4 bg-white border-2 border-indigo-500 shadow-sm rounded-full cursor-col-resize hover:scale-110 transition-transform z-20 flex items-center justify-center"
-                style={{ left: `calc(${pct(displayStart)}% - 8px)` }}
+                style={{ left: `calc(${getPct(displayStart)}% - 8px)` }}
                 onPointerDown={(e) => handlePointerDown(e, 'min')}
                 title="Start Value"
              >
@@ -213,7 +220,7 @@ export const Slider: React.FC<ControlProps & {
              </div>
              <div 
                 className="absolute w-4 h-4 bg-white border-2 border-pink-500 shadow-md rounded-full cursor-col-resize hover:scale-110 transition-transform z-20 flex items-center justify-center"
-                style={{ left: `calc(${pct(displayEnd)}% - 8px)` }}
+                style={{ left: `calc(${getPct(displayEnd)}% - 8px)` }}
                 onPointerDown={(e) => handlePointerDown(e, 'max')}
                 title="End Value"
              >
@@ -223,7 +230,7 @@ export const Slider: React.FC<ControlProps & {
         ) : (
           <div 
              className="absolute w-4 h-4 bg-white border border-slate-300 shadow-sm rounded-full cursor-pointer hover:scale-110 transition-transform z-10"
-             style={{ left: `calc(${pct(displayVal)}% - 8px)` }}
+             style={{ left: `calc(${getPct(displayVal)}% - 8px)` }}
              onPointerDown={(e) => handlePointerDown(e, 'value')}
           />
         )}

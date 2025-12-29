@@ -18,9 +18,7 @@ import { AudioSection } from './sections/AudioSection';
 import { ProjectSection } from './sections/ProjectSection';
 import { GuidesSection } from './sections/GuidesSection';
 import { PresetsSection } from './sections/PresetsSection';
-import { SoundDesignSection } from './sections/SoundDesignSection';
 import { GlobalToolsSection } from './sections/GlobalToolsSection';
-import { SystemSection } from './sections/SystemSection';
 import { ConnectionSettingsSection } from './sections/ConnectionSettingsSection';
 
 interface SettingsPanelProps {
@@ -48,6 +46,9 @@ interface SettingsPanelProps {
   ecoMode: boolean;
   setEcoMode: (val: boolean) => void;
 
+  selectionFilter: 'all' | 'links';
+  setSelectionFilter: (filter: 'all' | 'links') => void;
+
   setSelectedStrokeId: (id: string | null) => void;
   setSelectedStrokeParams: (params: SimulationParams | null) => void;
   updateParam: (key: keyof SimulationParams, value: any) => void;
@@ -71,12 +72,13 @@ interface SettingsPanelProps {
   toggleLock: (key: string) => void;
   
   initiateSave: () => void;
-  onCopyJson: () => void; // NEW
+  onCopyJson: () => void;
   triggerImportProject: () => void;
   setResetPosTrigger: React.Dispatch<React.SetStateAction<number>>;
   setDeleteSelectedTrigger: React.Dispatch<React.SetStateAction<number>>;
   setDeleteAllLinksTrigger: React.Dispatch<React.SetStateAction<number>>;
-  
+  savePresetTrigger: number;
+
   loadPreset: (params: SimulationParams, name: string) => void;
   deletePreset: (index: number) => void;
   saveNewPreset: (name: string, desc: string) => void;
@@ -96,7 +98,7 @@ const SidebarSeparator = ({ theme }: { theme: UITheme }) => (
 );
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
-  const { theme, isOpen, selectedStrokeId, selectedStrokeParams, brushParams } = props;
+  const { theme, isOpen, selectedStrokeId, selectedStrokeParams, brushParams, savePresetTrigger } = props;
   
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelSide, setPanelSide] = useState<'left' | 'right'>('right');
@@ -104,20 +106,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   const [panelTop, setPanelTop] = useState(24);
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [showModifiedOnly, setShowModifiedOnly] = useState(false);
-  
+  const [forceNamingPreset, setForceNamingPreset] = useState(0);
+
   const [sections, setSections] = useState({
-    system: false, project: false, guides: false, presets: true, physics: false, visuals: false, 
-    shape: false, social: false, audio: false, soundDesign: false, globalTools: false, 
+    project: false, guides: false, presets: true, physics: false, visuals: false, 
+    shape: false, social: false, audio: false, globalTools: false, 
     connections: true
   });
   
   const toggleSection = (key: keyof typeof sections) => setSections(prev => ({ ...prev, [key]: !prev[key] }));
 
+  useEffect(() => {
+    if (savePresetTrigger > 0) {
+      setSections(prev => ({ ...prev, presets: true }));
+      setForceNamingPreset(t => t + 1);
+    }
+  }, [savePresetTrigger]);
+
   const currentParams = (selectedStrokeId && selectedStrokeParams) ? selectedStrokeParams : brushParams;
   const currentSound = (selectedStrokeId && props.selectedStrokeSound) ? props.selectedStrokeSound : props.brushSound;
   const modeTitle = selectedStrokeId ? "Editing Selection" : (props.selectedConnectionIds.size > 0 ? "Editing Link" : "Settings");
 
-  // Logic helpers
   const shouldShow = (key: keyof SimulationParams | 'fill' | 'gradient' | string, subValue?: any, subDefault?: any) => {
     if (!showModifiedOnly) return true;
     if (subValue !== undefined && subDefault !== undefined) {
@@ -216,7 +225,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
         zIndex: 40
       }}
     >
-      <div className="flex-none px-6 py-4 border-b border-slate-100 flex justify-between items-center cursor-grab active:cursor-grabbing" onPointerDown={handlePanelPointerDown} title="Drag to snap Left/Right">
+      <div className="flex-none px-6 py-4 border-b border-slate-100 flex justify-between items-center cursor-grab active:cursor-grabbing" onPointerDown={handlePanelPointerDown}>
           <div className="flex items-center gap-3">
             <h3 className="font-bold flex items-center gap-2 text-sm tracking-wide pointer-events-none">
                 {selectedStrokeId ? <Edit3 size={15} className="text-indigo-600"/> : (props.selectedConnectionIds.size > 0 ? <LinkIcon size={15} className="text-indigo-600" /> : <Zap size={15} className="text-amber-500" />)}
@@ -225,21 +234,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
           </div>
           {(selectedStrokeId || props.selectedConnectionIds.size > 0) && (
             <div className="flex items-center gap-2">
-              <button 
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => props.setDeleteSelectedTrigger(t => t + 1)} 
-                  className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm"
-                  title="Delete Selected"
-              >
+              <button onClick={() => props.setDeleteSelectedTrigger(t => t + 1)} className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm">
                 <Trash2 size={14} />
               </button>
               {selectedStrokeId && (
-                  <button 
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={props.onSyncSelected} 
-                      title="Sync All Selected to Current Leader" 
-                      className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm"
-                  >
+                  <button onClick={props.onSyncSelected} title="Sync All Selected" className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm">
                       <RefreshCcw size={14} />
                   </button>
               )}
@@ -269,7 +268,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             initiateSave={props.initiateSave}
             triggerImportProject={props.triggerImportProject}
             setResetPosTrigger={props.setResetPosTrigger}
-            onCopyJson={props.onCopyJson} // NEW
+            onCopyJson={props.onCopyJson}
           />
           <SidebarSeparator theme={theme} />
           
@@ -298,6 +297,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             triggerImportPresets={props.triggerImportPresets}
             saveNewPreset={props.saveNewPreset}
             setShowModifiedOnly={setShowModifiedOnly}
+            forceNamingTrigger={forceNamingPreset}
           />
           <SidebarSeparator theme={theme} />
           
@@ -359,6 +359,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             </>
           )}
           
+          {/* COMBINED AUDIO REACTIVITY & SOUND DESIGN */}
           {(isGroupModified('audio') || !showModifiedOnly) && (
             <>
               <AudioSection 
@@ -367,22 +368,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 onToggle={() => toggleSection('audio')}
                 onReset={() => props.resetSection('audio')}
                 onRandom={() => props.randomizeSection('audio')}
+                currentSound={currentSound}
+                handleBufferReady={props.handleBufferReady}
+                handleSoundUpload={props.handleSoundUpload}
+                removeSound={props.removeSound}
+                updateSound={props.updateSound}
               />
               <SidebarSeparator theme={theme} />
             </>
           )}
-          
-          <SoundDesignSection 
-            {...sharedProps}
-            isOpen={sections.soundDesign}
-            onToggle={() => toggleSection('soundDesign')}
-            currentSound={currentSound}
-            handleBufferReady={props.handleBufferReady}
-            handleSoundUpload={props.handleSoundUpload}
-            removeSound={props.removeSound}
-            updateSound={props.updateSound}
-          />
-          <SidebarSeparator theme={theme} />
           
           <GlobalToolsSection 
             {...sharedProps}
@@ -393,16 +387,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             globalToolConfig={props.globalToolConfig}
             setGlobalToolConfig={props.setGlobalToolConfig}
             setDeleteAllLinksTrigger={props.setDeleteAllLinksTrigger}
-          />
-          
-          <SidebarSeparator theme={theme} />
-          <SystemSection 
-            {...sharedProps}
-            isOpen={sections.system}
-            onToggle={() => toggleSection('system')}
+            selectionFilter={props.selectionFilter}
+            setSelectionFilter={props.setSelectionFilter}
             ecoMode={props.ecoMode}
             setEcoMode={props.setEcoMode}
           />
+          <SidebarSeparator theme={theme} />
       </div>
       <div className="mt-auto pt-4 pb-2 border-t border-slate-100 text-[10px] text-slate-400 text-center font-medium tracking-wide"> vibe coded by <a href="http://www.ivangulizia.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo-500 text-slate-500 transition-colors">Ivan Gulizia</a> </div>
     </div>

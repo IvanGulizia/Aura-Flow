@@ -46,7 +46,7 @@ export default function App() {
   
   const [embedMode, setEmbedMode] = useState(false);
   const [embedFit, setEmbedFit] = useState<'cover' | 'contain' | null>(null);
-  const [embedZoom, setEmbedZoom] = useState<number>(1); // NEW: Initial Zoom Factor
+  const [embedZoom, setEmbedZoom] = useState<number>(1); 
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
@@ -57,7 +57,7 @@ export default function App() {
   const [symmetryConfig, setSymmetryConfig] = useState<SymmetryConfig>(DEFAULT_SYMMETRY);
 
   const [selectedStrokeIds, setSelectedStrokeIds] = useState<Set<string>>(new Set());
-  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null); // Leader of selection for UI display
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null); 
   const [selectedStrokeParams, setSelectedStrokeParams] = useState<SimulationParams | null>(null);
   const [selectedStrokeSound, setSelectedStrokeSound] = useState<SoundConfig | null>(null);
   
@@ -72,7 +72,7 @@ export default function App() {
   const [ecoMode, setEcoMode] = useState(true); 
   
   const [interactionMode, setInteractionMode] = useState<'draw' | 'select'>('draw');
-  const [selectionFilter, setSelectionFilter] = useState<'all' | 'links'>('all'); // NEW: Filter for link selection
+  const [selectionFilter, setSelectionFilter] = useState<'all' | 'links'>('all'); 
   const [globalForceTool, setGlobalForceTool] = useState<GlobalForceType>('none');
   const [globalToolConfig, setGlobalToolConfig] = useState<GlobalToolConfig>(DEFAULT_GLOBAL_TOOL);
 
@@ -82,7 +82,8 @@ export default function App() {
   const [redoTrigger, setRedoTrigger] = useState(0);
   const [resetPosTrigger, setResetPosTrigger] = useState(0);
   const [deleteAllLinksTrigger, setDeleteAllLinksTrigger] = useState(0); 
-  
+  const [savePresetTrigger, setSavePresetTrigger] = useState(0); // Trigger for SettingsPanel to open naming UI
+
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [paletteColors, setPaletteColors] = useState(DEFAULT_PALETTE);
@@ -120,6 +121,15 @@ export default function App() {
     }
   }, []);
 
+  // NEW: Intelligent Auto-Pause when window loses focus (if Eco Mode is active)
+  useEffect(() => {
+    const handleBlur = () => {
+      if (ecoMode) setIsPlaying(false);
+    };
+    window.addEventListener('blur', handleBlur);
+    return () => window.removeEventListener('blur', handleBlur);
+  }, [ecoMode]);
+
   const loadProjectFromUrl = (url: string) => {
       setIsLoadingData(true);
       setLoadingError(null);
@@ -137,7 +147,6 @@ export default function App() {
           if (canvasRef.current) {
             canvasRef.current.importData(data);
           } else {
-             // Retry once if canvas not ready
              setTimeout(() => {
                  if (canvasRef.current) canvasRef.current.importData(data);
              }, 500);
@@ -168,9 +177,33 @@ export default function App() {
       loadPreset(nextPreset.params, nextPreset.name);
   };
 
+  const pickRandomPreset = () => {
+      if (presets.length === 0) return;
+      const randomIdx = Math.floor(Math.random() * presets.length);
+      const p = presets[randomIdx];
+      loadPreset(p.params, p.name);
+  };
+
+  const initiateSave = () => { if (canvasRef.current) setShowSaveModal(true); };
+  
+  const triggerImportProject = () => fileInputRef.current?.click();
+
+  const exportSinglePreset = () => {
+      try {
+          const current = selectedStrokeId && selectedStrokeParams ? selectedStrokeParams : brushParams;
+          const name = activePresetName || "custom-preset";
+          const singlePreset = { name, description: "Exported single preset", params: current };
+          const json = JSON.stringify([singlePreset], null, 2); 
+          const blob = new Blob([json], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${name.toLowerCase().replace(/\s+/g, '-')}.json`; 
+          document.body.appendChild(a);
+          setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+      } catch (err) { console.error(err); }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Allow typing in inputs
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.code === 'Space') { e.preventDefault(); setIsPlaying(p => !p); }
@@ -178,23 +211,20 @@ export default function App() {
       if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y')) { e.preventDefault(); setRedoTrigger(t => t + 1); }
       if (e.key.toLowerCase() === 'h' && !embedMode) { setShowDebug(prev => !prev); }
       
+      // --- SHORTCUTS ---
+      if (e.key.toLowerCase() === 'a' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); cyclePreset(-1); }
+      if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); cyclePreset(1); }
+      if (e.key.toLowerCase() === 'e' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); initiateSave(); }
+      if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); pickRandomPreset(); }
+      if (e.key === '1') { e.preventDefault(); if(presets.length > 0) loadPreset(presets[0].params, presets[0].name); }
+      
       // NEW SHORTCUTS
-      if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) { setResetPosTrigger(t => t + 1); } // R - Reset
-      
-      if (e.key.toLowerCase() === 'e') {
-          if (e.shiftKey) {
-              e.preventDefault(); 
-              initiateSave(); // Shift+E - Export
-          } else {
-              cyclePreset(1); // E - Next Preset
-          }
-      }
-      
-      if (e.key.toLowerCase() === 'q' && !e.ctrlKey) { cyclePreset(-1); } // Q - Prev Preset
-      if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.shiftKey) { triggerImportProject(); } // I - Import
-      if (e.key.toLowerCase() === 'f' && !e.ctrlKey) { randomizeSection('visuals'); } // F - Randomize (Used Visuals as simple random example, or implement full random)
+      if (e.key.toLowerCase() === 'i') { e.preventDefault(); triggerImportProject(); }
+      if (e.key.toLowerCase() === 't') { e.preventDefault(); exportSinglePreset(); }
+      if (e.key.toLowerCase() === 's') { e.preventDefault(); setShowSettings(true); setSavePresetTrigger(t => t + 1); }
+      if (e.key.toLowerCase() === 'g') { e.preventDefault(); setGridConfig(p => ({...p, enabled: !p.enabled})); }
 
-      // Delete key
+      if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) { setResetPosTrigger(t => t + 1); }
       if (e.key === 'Delete' && !embedMode) {
           if (selectedStrokeId || selectedStrokeIds.size > 0 || selectedConnectionIds.size > 0) {
               setDeleteSelectedTrigger(t => t + 1);
@@ -204,6 +234,14 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [embedMode, selectedStrokeId, selectedStrokeIds, selectedConnectionIds, presets, activePresetName]);
+
+  // --- RIGHT CLICK TOGGLE ---
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (embedMode) return;
+    e.preventDefault();
+    setInteractionMode(prev => prev === 'draw' ? 'select' : 'draw');
+    setGlobalForceTool('none');
+  };
 
   const toggleLock = (key: string) => setLockedParams(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
 
@@ -220,7 +258,6 @@ export default function App() {
   const updateParam = (key: keyof SimulationParams, value: any) => {
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams({ ...selectedStrokeParams, [key]: value });
-        // Use imperative handle for selective update
         canvasRef.current?.updateSelectedParams({ key, value });
     } else {
         setBrushParams({ ...brushParams, [key]: value });
@@ -228,11 +265,9 @@ export default function App() {
     setActivePresetName(null);
   };
 
-  // Specific for connections
   const updateConnectionParam = (key: keyof Connection, value: any) => {
       if (selectedConnectionParams) {
           setSelectedConnectionParams({ ...selectedConnectionParams, [key]: value });
-          // Partial connection update
           canvasRef.current?.updateSelectedConnectionParams({ [key]: value });
       }
   };
@@ -242,12 +277,9 @@ export default function App() {
       if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
           const newMods = { ...selectedStrokeParams.modulations };
           delete newMods[key];
-          
           setSelectedStrokeParams({ ...selectedStrokeParams, [key]: defaultValue, modulations: newMods });
-          
-          // CRITICAL FIX: Explicitly remove modulation from Canvas state
-          canvasRef.current?.updateSelectedParams({ key, value: undefined, modulation: true }); // Clear Modulation
-          canvasRef.current?.updateSelectedParams({ key, value: defaultValue }); // Reset Value
+          canvasRef.current?.updateSelectedParams({ key, value: undefined, modulation: true }); 
+          canvasRef.current?.updateSelectedParams({ key, value: defaultValue }); 
       } else {
           const newMods = { ...brushParams.modulations };
           delete newMods[key];
@@ -266,10 +298,8 @@ export default function App() {
   const updateFill = (updates: Partial<SimulationParams['fill']>) => {
     const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newFill = { ...target.fill, ...updates };
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
-        // Partial deep update for fill
         canvasRef.current?.updateSelectedParams({ fill: newFill });
     } else {
         setBrushParams({ ...brushParams, fill: newFill });
@@ -281,7 +311,6 @@ export default function App() {
     const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newGrad = { ...target.fill.gradient, ...updates };
     const newFill = { ...target.fill, gradient: newGrad };
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams({ ...selectedStrokeParams, fill: newFill });
         canvasRef.current?.updateSelectedParams({ fill: newFill });
@@ -294,7 +323,6 @@ export default function App() {
   const updateGradient = (updates: Partial<SimulationParams['gradient']>) => {
     const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newGrad = { ...target.gradient, ...updates };
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams({ ...selectedStrokeParams, gradient: newGrad });
         canvasRef.current?.updateSelectedParams({ gradient: newGrad });
@@ -336,10 +364,8 @@ export default function App() {
     const target = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
     const newMods = { ...target.modulations };
     if (config === undefined) delete newMods[key]; else newMods[key] = config;
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams({ ...selectedStrokeParams, modulations: newMods });
-        // Send explicit removal if undefined, handled in Canvas
         canvasRef.current?.updateSelectedParams({ key, value: config, modulation: true });
     } else {
         setBrushParams({ ...brushParams, modulations: newMods });
@@ -351,12 +377,10 @@ export default function App() {
     const keys = PARAMS_GROUPS[section];
     const newValues: any = {};
     keys.forEach(k => { newValues[k] = (DEFAULT_PARAMS as any)[k]; });
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) { 
         const updated = { ...selectedStrokeParams }; 
         for (const k in newValues) { (updated as any)[k] = newValues[k]; } 
         setSelectedStrokeParams(updated); 
-        // Bulk update for section
         canvasRef.current?.updateSelectedParams(newValues);
     } else {
         setBrushParams(prev => ({ ...prev, ...newValues }));
@@ -375,7 +399,6 @@ export default function App() {
       else if (k.startsWith('audioTo')) newValues[k] = Math.random() > 0.5;
       else { const range = PARAM_RANGES[k]; if (range) newValues[k] = range.min + Math.random() * (range.max - range.min); else newValues[k] = Math.random(); }
     });
-    
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) {
         setSelectedStrokeParams(prev => prev ? ({ ...prev, ...newValues }) : null);
         canvasRef.current?.updateSelectedParams(newValues);
@@ -391,7 +414,6 @@ export default function App() {
       }
   };
 
-  // General selection handler
   const handleSelection = useCallback((
       strokeIds: string[] | string | null, 
       strokeParams: SimulationParams | null, 
@@ -400,12 +422,9 @@ export default function App() {
       connectionParams: Connection | null
   ) => {
     if (embedMode) return;
-    
-    // 1. Handle Strokes
     if (Array.isArray(strokeIds)) {
        setSelectedStrokeIds(new Set(strokeIds));
        if (strokeIds.length > 0) {
-           // We expect the last ID in the array to be the "leader" or most recently selected
            setSelectedStrokeId(strokeIds[strokeIds.length - 1]);
            setSelectedStrokeParams(strokeParams);
            setSelectedStrokeSound(strokeSound);
@@ -425,8 +444,6 @@ export default function App() {
        setSelectedStrokeParams(strokeParams);
        setSelectedStrokeSound(strokeSound);
     }
-
-    // 2. Handle Connections
     if (Array.isArray(connectionIds)) {
         setSelectedConnectionIds(new Set(connectionIds));
         if (connectionIds.length > 0) {
@@ -441,18 +458,12 @@ export default function App() {
         setSelectedConnectionIds(new Set([connectionIds]));
         setSelectedConnectionParams(connectionParams);
     }
-
-    // 3. Show settings if anything is selected
     const hasSelection = (Array.isArray(strokeIds) ? strokeIds.length > 0 : !!strokeIds) || 
                          (Array.isArray(connectionIds) ? connectionIds.length > 0 : !!connectionIds);
-    
     if (hasSelection) {
         setShowSettings(true);
     }
-
   }, [embedMode]);
-
-  const initiateSave = () => { if (canvasRef.current) setShowSaveModal(true); };
 
   const handleSaveConfirm = (name: string) => {
     if (!canvasRef.current) return;
@@ -471,7 +482,6 @@ export default function App() {
     navigator.clipboard.writeText(json).catch(err => console.error('Failed to copy json', err));
   };
 
-  const triggerImportProject = () => fileInputRef.current?.click();
   const handleImportProject = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const data = JSON.parse(ev.target?.result as string); if (canvasRef.current) canvasRef.current.importData(data); } catch (err) { alert("Invalid JSON"); } }; reader.readAsText(file); e.target.value = ''; };
   
   const saveNewPreset = (name: string, desc: string) => { 
@@ -484,7 +494,6 @@ export default function App() {
   const loadPreset = (params: SimulationParams, name: string) => { 
       if (selectedStrokeIds.size > 0) {
           setSelectedStrokeParams({ ...params }); 
-          // Full update for preset load on selection
           canvasRef.current?.syncSelectedParams(params);
       } else { 
           setBrushParams({ ...params }); 
@@ -500,21 +509,6 @@ export default function App() {
         const a = document.createElement('a'); a.href = url; a.download = `aura-flow-presets.json`; document.body.appendChild(a);
         setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
     } catch (err) {}
-  };
-
-  // New function to export the currently active settings as a single preset
-  const exportSinglePreset = () => {
-      try {
-          const current = selectedStrokeId && selectedStrokeParams ? selectedStrokeParams : brushParams;
-          const name = activePresetName || "custom-preset";
-          const singlePreset = { name, description: "Exported single preset", params: current };
-          const json = JSON.stringify([singlePreset], null, 2); // Wrap in array for compatibility
-          const blob = new Blob([json], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = url; a.download = `${name.toLowerCase().replace(/\s+/g, '-')}.json`; 
-          document.body.appendChild(a);
-          setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-      } catch (err) { console.error(err); }
   };
 
   const triggerImportPresets = () => presetFileInputRef.current?.click();
@@ -553,6 +547,7 @@ export default function App() {
   return (
     <div 
        className="relative w-full h-[100dvh] overflow-hidden text-slate-800 transition-all duration-300"
+       onContextMenu={handleContextMenu}
        style={{ 
          backgroundColor: 'var(--canvas-bg)',
          border: `${uiTheme.screenBorderWidth}px solid ${uiTheme.screenBorderColor}`,
@@ -604,12 +599,12 @@ export default function App() {
         isSoundEngineEnabled={isSoundEngineEnabled}
         isMicEnabled={isMicEnabled}
         interactionMode={interactionMode}
-        selectionFilter={selectionFilter} // PASS FILTER
+        selectionFilter={selectionFilter} 
         globalForceTool={globalForceTool}
         globalToolConfig={globalToolConfig}
         ecoMode={ecoMode}
-        embedFit={embedFit} // PASS EMBED FIT STATE
-        embedZoom={embedZoom} // PASS INITIAL ZOOM
+        embedFit={embedFit} 
+        embedZoom={embedZoom} 
         onStrokeSelect={handleSelection}
         clearTrigger={clearTrigger}
         deleteSelectedTrigger={deleteSelectedTrigger}
@@ -647,17 +642,6 @@ export default function App() {
               <IconButton icon={<PenTool size={18} />} onClick={() => { setInteractionMode('draw'); setGlobalForceTool('none'); }} active={interactionMode === 'draw' && globalForceTool === 'none'} label="Draw" />
               <div className="relative flex items-center">
                   <IconButton icon={<MousePointer2 size={18} />} onClick={() => { setInteractionMode('select'); setGlobalForceTool('none'); }} active={interactionMode === 'select' && globalForceTool === 'none'} label="Select" />
-                  
-                  {/* LINK FILTER TOGGLE (Only in Select Mode) */}
-                  {interactionMode === 'select' && globalForceTool === 'none' && (
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setSelectionFilter(f => f === 'all' ? 'links' : 'all'); }}
-                        className={`absolute -bottom-6 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full flex items-center justify-center border transition-all text-[8px] z-50 ${selectionFilter === 'links' ? 'bg-indigo-600 text-white border-indigo-700 shadow' : 'bg-white text-slate-400 border-slate-200 hover:text-indigo-500'}`}
-                        title={selectionFilter === 'links' ? "Select: Links Only" : "Select: All Objects"}
-                      >
-                          <LinkIcon size={12} />
-                      </button>
-                  )}
               </div>
               
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0" />
@@ -703,6 +687,9 @@ export default function App() {
             ecoMode={ecoMode}
             setEcoMode={setEcoMode}
 
+            selectionFilter={selectionFilter}
+            setSelectionFilter={setSelectionFilter}
+
             setSelectedStrokeId={(id) => { 
                 if (id) {
                     setSelectedStrokeId(id);
@@ -734,12 +721,13 @@ export default function App() {
             toggleLock={toggleLock}
             
             initiateSave={initiateSave}
-            onCopyJson={handleCopyJson} // NEW
+            onCopyJson={handleCopyJson} 
             triggerImportProject={triggerImportProject}
             setResetPosTrigger={setResetPosTrigger}
             setDeleteSelectedTrigger={setDeleteSelectedTrigger}
             setDeleteAllLinksTrigger={setDeleteAllLinksTrigger}
-            
+            savePresetTrigger={savePresetTrigger}
+
             loadPreset={loadPreset}
             deletePreset={deletePreset}
             saveNewPreset={saveNewPreset}
