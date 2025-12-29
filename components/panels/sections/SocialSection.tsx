@@ -12,7 +12,7 @@ export const SocialSection: React.FC<ParamsSectionProps> = ({
       <SectionHeader title="Interaction" isOpen={isOpen} onToggle={onToggle} onReset={onReset} onRandom={onRandom} />
       {isOpen && (
         <div className="pb-4 space-y-3">
-          {(!showModifiedOnly || [shouldShow('neighborRadius'), shouldShow('repulsionForce'), shouldShow('attractionForce'), shouldShow('alignmentForce'), shouldShow('cohesionForce')].some(Boolean)) && (
+          {(!showModifiedOnly || [shouldShow('neighborRadius'), shouldShow('repulsionForce'), shouldShow('attractionForce'), shouldShow('alignmentForce'), shouldShow('cohesionForce'), shouldShow('swarmCursorInfluence')].some(Boolean)) && (
             <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/50">
               <div className="text-[9px] font-bold text-indigo-400 mb-3 flex items-center gap-1 uppercase tracking-widest"><Users size={10}/> Swarm Intelligence</div>
               {shouldShow('neighborRadius') && <Slider label="Radius" value={currentParams.neighborRadius} min={10} max={300} step={10} onChange={(v) => updateParam('neighborRadius', v)} {...getCommonProps('neighborRadius')} />}
@@ -20,7 +20,7 @@ export const SocialSection: React.FC<ParamsSectionProps> = ({
               {shouldShow('attractionForce') && <Slider label="Attraction" value={currentParams.attractionForce} min={0} max={0.2} step={0.005} onChange={(v) => updateParam('attractionForce', v)} {...getCommonProps('attractionForce')} />}
               {shouldShow('alignmentForce') && <Slider label="Alignment" value={currentParams.alignmentForce} min={0} max={0.5} step={0.01} onChange={(v) => updateParam('alignmentForce', v)} {...getCommonProps('alignmentForce')} />}
               {shouldShow('cohesionForce') && <Slider label="Cohesion" value={currentParams.cohesionForce} min={0} max={0.5} step={0.01} onChange={(v) => updateParam('cohesionForce', v)} {...getCommonProps('cohesionForce')} />}
-              <Slider label="Cursor Influence" value={currentParams.swarmCursorInfluence || 0} min={0} max={1} step={0.1} onChange={(v) => updateParam('swarmCursorInfluence', v)} description="0 = Always Active, 1 = Only near cursor" />
+              {shouldShow('swarmCursorInfluence') && <Slider label="Cursor Influence" value={currentParams.swarmCursorInfluence || 0} min={0} max={1} step={0.1} onChange={(v) => updateParam('swarmCursorInfluence', v)} {...getCommonProps('swarmCursorInfluence')} />}
             </div>
           )}
           {(!showModifiedOnly || [shouldShow('mouseInfluenceRadius'), shouldShow('mouseRepulsion'), shouldShow('mouseAttraction'), shouldShow('mouseFalloff')].some(Boolean)) && (

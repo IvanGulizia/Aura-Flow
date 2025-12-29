@@ -107,7 +107,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const cx = canvasRef.current.width / 2;
     const cy = canvasRef.current.height / 2;
     const baseSize = Math.max(10, gridConfig.size);
-    const snapSize = baseSize * (gridConfig.snapFactor || 1);
+    const factor = gridConfig.snapFactor || 1;
+    const snapSize = factor < 1 ? baseSize * factor : baseSize;
     const snX = Math.round((x - cx) / snapSize) * snapSize;
     const snY = Math.round((y - cy) / snapSize) * snapSize;
     return { x: cx + snX, y: cy + snY };
@@ -383,25 +384,16 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       activeStrokesRef.current.forEach((stroke, idx) => {
         if (idx >= symPoints.length) return;
         const target = symPoints[idx]; const lastP = stroke.points[stroke.points.length - 1]; const isStart = stroke.points.length < 2;
-        
-        // INTERPOLATION LOGIC:
-        // 1. Grid Mode: Interpolate based on Grid Size to allow structural arcs (avoid tiny segments).
-        // 2. Free Mode: Interpolate based on Segmentation (fine) to avoid holes/sparse look.
-        
         const dx = target.x - lastP.x;
         const dy = target.y - lastP.y;
         const distSq = dx*dx + dy*dy;
         const dist = Math.sqrt(distSq);
-        
         let seg = Math.max(1, stroke.params.segmentation);
-        
-        // If Grid Snapping is ON, increase the segment length to the Grid Size/Snap Size.
         if (P.gridConfig.enabled && P.gridConfig.snap) {
             const gridSize = Math.max(10, P.gridConfig.size);
             const snapFactor = P.gridConfig.snapFactor || 1;
             seg = gridSize * snapFactor;
         }
-
         if (isStart) {
              stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
         } else if (dist >= seg) {
@@ -414,7 +406,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                  stroke.points.push({ x: nx, y: ny, baseX: nx, baseY: ny, vx: 0, vy: 0, pressure: nPressure });
              }
         } else { return; }
-
         let cx = 0, cy = 0; stroke.points.forEach(p => { cx += p.x; cy += p.y; }); 
         stroke.center.x = cx / stroke.points.length; stroke.center.y = cy / stroke.points.length; 
         if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center }; 
@@ -451,7 +442,71 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     pointerRef.current.lastX = pointerX; pointerRef.current.lastY = pointerY;
     if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && P.globalForceTool !== 'cursor' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) { const influenceRadius = P.globalToolConfig.radius; const strength = P.globalToolConfig.force * 2; const falloffExp = P.globalToolConfig.falloff ? (1 + P.globalToolConfig.falloff * 2) : 1; strokesRef.current.forEach(stroke => { stroke.points.forEach(p => { const dx = pointerX - p.x; const dy = pointerY - p.y; const dSq = dx*dx + dy*dy; if (dSq < influenceRadius * influenceRadius) { const dist = Math.sqrt(dSq); const forceMag = Math.pow(1 - (dist / influenceRadius), falloffExp) * strength; if (P.globalForceTool === 'repulse') { p.vx -= (dx / dist) * forceMag; p.vy -= (dy / dist) * forceMag; } else if (P.globalForceTool === 'attract') { p.vx += (dx / dist) * forceMag; p.vy += (dy / dist) * forceMag; } else if (P.globalForceTool === 'vortex') { p.vx += (-dy / dist) * forceMag; p.vy += (dx / dist) * forceMag; } } }); }); }
     for (let i = connectionsRef.current.length - 1; i >= 0; i--) { const conn = connectionsRef.current[i]; const s1 = strokesRef.current.find(s => s.id === conn.from.strokeId); const s2 = strokesRef.current.find(s => s.id === conn.to.strokeId); if (s1 && s2) { const p1 = s1.points[conn.from.pointIndex]; const p2 = s2.points[conn.to.pointIndex]; if (p1 && p2) { const dx = p2.x - p1.x; const dy = p2.y - p1.y; const dist = Math.sqrt(dx*dx + dy*dy); if (dist > 0.1) { const diff = dist - conn.length; if (conn.breakingForce > 0 && Math.abs(diff) > conn.breakingForce * 10) { connectionsRef.current.splice(i, 1); continue; } const force = diff * conn.stiffness * 0.5; const fx = (dx / dist) * force; const fy = (dy / dist) * force; const w1 = (conn.bias !== undefined) ? conn.bias : 0.5; const w2 = 1 - w1; p1.vx += fx * w1; p1.vy += fy * w1; p2.vx += -fx * w2; p2.vy += -fy * w2; const influence = conn.influence || 0; const falloff = conn.falloff !== undefined ? conn.falloff : 1; const decayEasing = conn.decayEasing || 'linear'; if (influence > 0) { for (let k = 1; k <= influence; k++) { const factor = 1.0 * (1 - falloff) + (1 - applyEasing(k / (influence + 1), decayEasing)) * falloff; const left1 = s1.points[conn.from.pointIndex - k]; const right1 = s1.points[conn.from.pointIndex + k]; if (left1) { left1.vx += fx * w1 * factor; left1.vy += fy * w1 * factor; } if (right1) { right1.vx += fx * w1 * factor; right1.vy += fy * w1 * factor; } const left2 = s2.points[conn.to.pointIndex - k]; const right2 = s2.points[conn.to.pointIndex + k]; if (left2) { left2.vx += -fx * w2 * factor; left2.vy += -fy * w2 * factor; } if (right2) { right2.vx += -fx * w2 * factor; right2.vy += -fy * w2 * factor; } } } } } } else { connectionsRef.current.splice(i, 1); } }
-    const swarmForces = new Map<string, { vx: number, vy: number }>(); for (let i = 0; i < strokesRef.current.length; i++) { const s1 = strokesRef.current[i]; if (s1.points.length < 2) continue; const r = s1.params.neighborRadius; if (r <= 0 || (s1.params.alignmentForce === 0 && s1.params.cohesionForce === 0 && s1.params.repulsionForce === 0)) continue; let influenceFactor = 1; if (s1.params.swarmCursorInfluence > 0 && hasPointer) { const distToCursor = Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y); const range = s1.params.mouseInfluenceRadius || 200; influenceFactor = distToCursor > range ? 0 : 1 - (distToCursor / range); influenceFactor = 1 * (1 - s1.params.swarmCursorInfluence) + influenceFactor * s1.params.swarmCursorInfluence; } if (influenceFactor <= 0.01) continue; let alignX = 0, alignY = 0, cohX = 0, cohY = 0, sepX = 0, sepY = 0, count = 0; for (let j = 0; j < strokesRef.current.length; j++) { if (i === j) continue; const s2 = strokesRef.current[j]; if (s2.points.length < 2) continue; const dx = s2.center.x - s1.center.x; const dy = s2.center.y - s1.center.y; const distSq = dx*dx + dy*dy; if (distSq < r * r && distSq > 0.1) { const dist = Math.sqrt(distSq); let s2vx = 0, s2vy = 0; const step = Math.ceil(s2.points.length / 5); for(let k=0; k<s2.points.length; k+=step) { s2vx += s2.points[k].vx; s2vy += s2.points[k].vy; } s2vx /= (s2.points.length/step); s2vy /= (s2.points.length/step); alignX += s2vx; alignY += s2vy; cohX += s2.center.x; cohY += s2.center.y; sepX += (s1.center.x - s2.center.x) / dist; sepY += (s1.center.y - s2.center.y) / dist; count++; } } if (count > 0) { alignX /= count; alignY /= count; cohX = (cohX/count - s1.center.x); cohY = (cohY/count - s1.center.y); const fAlign = s1.params.alignmentForce * influenceFactor * 0.5; const fCoh = s1.params.cohesionForce * influenceFactor * 0.05; const fSep = s1.params.repulsionForce * influenceFactor * 2.0; swarmForces.set(s1.id, { vx: (alignX * fAlign) + (cohX * fCoh) + (sepX * fSep), vy: (alignY * fAlign) + (cohY * fCoh) + (sepY * fSep) }); } }
+    
+    // --- UPDATED SWARM PHYSICS LOOP WITH MODULATION ---
+    const swarmForces = new Map<string, { vx: number, vy: number }>(); 
+    for (let i = 0; i < strokesRef.current.length; i++) {
+        const s1 = strokesRef.current[i];
+        if (s1.points.length < 2) continue;
+
+        // Metrics for modulation
+        const s1CenterDist = hasPointer ? Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y) : 10000;
+        const s1InfluenceRadius = s1.params.mouseInfluenceRadius || 150;
+
+        // Resolve Modulation Parameters for Swarm (Stroke-level resolution)
+        const r = resolveParam(s1.params.neighborRadius, 'neighborRadius', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
+        const alignF = resolveParam(s1.params.alignmentForce, 'alignmentForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
+        const cohF = resolveParam(s1.params.cohesionForce, 'cohesionForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
+        const repF = resolveParam(s1.params.repulsionForce, 'repulsionForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
+        const swarmCursorInf = resolveParam(s1.params.swarmCursorInfluence, 'swarmCursorInfluence', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
+
+        if (r <= 0 || (alignF === 0 && cohF === 0 && repF === 0)) continue;
+
+        let influenceFactor = 1;
+        if (swarmCursorInf > 0 && hasPointer) {
+            const distToCursor = s1CenterDist;
+            const range = s1.params.mouseInfluenceRadius || 200;
+            influenceFactor = distToCursor > range ? 0 : 1 - (distToCursor / range);
+            influenceFactor = 1 * (1 - swarmCursorInf) + influenceFactor * swarmCursorInf;
+        }
+        if (influenceFactor <= 0.01) continue;
+
+        let alignX = 0, alignY = 0, cohX = 0, cohY = 0, sepX = 0, sepY = 0, count = 0;
+        for (let j = 0; j < strokesRef.current.length; j++) {
+            if (i === j) continue;
+            const s2 = strokesRef.current[j];
+            if (s2.points.length < 2) continue;
+            const dx = s2.center.x - s1.center.x;
+            const dy = s2.center.y - s1.center.y;
+            const distSq = dx*dx + dy*dy;
+            if (distSq < r * r && distSq > 0.1) {
+                const dist = Math.sqrt(distSq);
+                let s2vx = 0, s2vy = 0;
+                const step = Math.ceil(s2.points.length / 5);
+                for(let k=0; k<s2.points.length; k+=step) {
+                    s2vx += s2.points[k].vx;
+                    s2vy += s2.points[k].vy;
+                }
+                s2vx /= (s2.points.length/step);
+                s2vy /= (s2.points.length/step);
+                alignX += s2vx; alignY += s2vy;
+                cohX += s2.center.x; cohY += s2.center.y;
+                sepX += (s1.center.x - s2.center.x) / dist;
+                sepY += (s1.center.y - s2.center.y) / dist;
+                count++;
+            }
+        }
+        if (count > 0) {
+            alignX /= count; alignY /= count;
+            cohX = (cohX/count - s1.center.x);
+            cohY = (cohY/count - s1.center.y);
+            const fAlign = alignF * influenceFactor * 0.5;
+            const fCoh = cohF * influenceFactor * 0.05;
+            const fSep = repF * influenceFactor * 2.0;
+            swarmForces.set(s1.id, { vx: (alignX * fAlign) + (cohX * fCoh) + (sepX * fSep), vy: (alignY * fAlign) + (cohY * fCoh) + (sepY * fSep) });
+        }
+    }
+
     for (const stroke of strokesRef.current) { let cx = 0, cy = 0, len = stroke.points.length; let totalSpeed = 0; if (len === 0) continue; for (const p of stroke.points) { cx += p.x; cy += p.y; totalSpeed += Math.hypot(p.vx, p.vy); } stroke.center.x = cx / len; stroke.center.y = cy / len; const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000; const influenceRadius = stroke.params.mouseInfluenceRadius || 150; const swarmF = swarmForces.get(stroke.id) || { vx: 0, vy: 0 }; if (P.isSoundEngineEnabled && stroke.sound.bufferId && stroke.sound.enabled) { const ox = stroke.originCenter?.x ?? stroke.center.x; const oy = stroke.originCenter?.y ?? stroke.center.y; audioManager.updateStrokeSound(stroke.id, stroke.sound.bufferId, { ...stroke.sound, reverb: stroke.sound.reverbSend }, { cursorDist: centerDist, physicsSpeed: (totalSpeed / len) * 20, displacement: { dist: Math.hypot(stroke.center.x - ox, stroke.center.y - oy), x: stroke.center.x - ox, y: stroke.center.y - oy }, timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0 }); }
       for (let j = 0; j < stroke.points.length; j++) { const p = stroke.points[j]; const progress = j / (len - 1 || 1); const pDist = hasPointer ? Math.hypot(pointerX - p.x, pointerY - p.y) : 10000; const mass = resolveParam(stroke.params.mass, 'mass', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const friction = resolveParam(stroke.params.friction, 'friction', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const tension = resolveParam(stroke.params.tension, 'tension', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const wiggleAmp = resolveParam(stroke.params.wiggleAmplitude, 'wiggleAmplitude', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const mouseRep = resolveParam(stroke.params.mouseRepulsion, 'mouseRepulsion', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const mouseAttr = resolveParam(stroke.params.mouseAttraction, 'mouseAttraction', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const elasticity = resolveParam(stroke.params.elasticity, 'elasticity', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const rGravX = resolveParam(stroke.params.gravityX, 'gravityX', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const rGravY = resolveParam(stroke.params.gravityY, 'gravityY', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const invMass = 1 / Math.max(0.1, mass); const frictionFactor = friction * (1 - stroke.params.viscosity * 0.1); const isWiggling = wiggleAmp > 0 || tension > 0 || (stroke.params.audioToWiggle && globalBass > 0.1); let fx = (p.baseX - p.x) * elasticity + rGravX * mass; let fy = (p.baseY - p.y) * elasticity + rGravY * mass; fx += swarmF.vx * mass; if (isWiggling) { const phase = (j * stroke.params.wiggleFrequency) + (timeRef.current * stroke.params.waveSpeed) + stroke.phaseOffset; let noiseX = Math.sin(phase) * wiggleAmp; let noiseY = Math.cos(phase + 2.3) * wiggleAmp; if (tension > 0) { noiseX += (Math.random() - 0.5) * tension; noiseY += (Math.random() - 0.5) * tension; } if (stroke.params.audioToWiggle) { const boost = 1 + globalBass * stroke.params.audioSensitivity * 5; noiseX *= boost; noiseY *= boost; } fx += noiseX * 0.1; fy += noiseY * 0.1; } p.vx += fx * invMass + swarmF.vx; p.vy += fy * invMass + swarmF.vy; if (hasPointer && (P.globalForceTool === 'none' || P.globalForceTool === 'cursor') && (mouseRep > 0 || mouseAttr > 0) && pDist < influenceRadius) { const dist = pDist; const dx = pointerX - p.x; const dy = pointerY - p.y; const force = Math.pow(1 - (dist / influenceRadius), stroke.params.mouseFalloff || 1); if (mouseRep > 0) { p.vx -= (dx / dist) * force * mouseRep; p.vy -= (dy / dist) * force * mouseRep; } if (mouseAttr > 0) { p.vx += (dx / dist) * force * mouseAttr; p.vy += (dy / dist) * force * mouseAttr; } } p.vx *= frictionFactor; p.vy *= frictionFactor; p.x += p.vx; p.y += p.vy; if (stroke.params.maxDisplacement > 0) { const distFromAnchor = Math.hypot(p.x - p.baseX, p.y - p.baseY); if (distFromAnchor > stroke.params.maxDisplacement) { const angle = Math.atan2(p.y - p.baseY, p.x - p.baseX); p.x = p.baseX + Math.cos(angle) * stroke.params.maxDisplacement; p.y = p.baseY + Math.sin(angle) * stroke.params.maxDisplacement; p.vx *= 0.5; p.vy *= 0.5; } } }
     }
@@ -620,7 +675,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 const geomLast = getCornerGeometry(points[len-2], points[len-1], points[0], roundingParam, false, false);
                 if (geomLast) {
                     ctx.lineTo(geomLast.sx, geomLast.sy);
-                    ctx.arcTo(points[len-1].x, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius);
+                    ctx.arcTo(points[len-1].y, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius);
                 } else {
                     ctx.lineTo(points[len-1].x, points[len-1].y);
                 }

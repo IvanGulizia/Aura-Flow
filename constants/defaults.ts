@@ -93,7 +93,8 @@ export const PARAM_RANGES: Record<string, {min: number, max: number}> = {
   strokeGradientAngle: {min: 0, max: 360},
   strokeGradientMidpoint: {min: 0, max: 1},
   fillGradientAngle: {min: 0, max: 360},
-  closePathRadius: {min: 10, max: 200}
+  closePathRadius: {min: 10, max: 200},
+  snapFactor: { min: 0.5, max: 10 }
 };
 
 export const PARAM_DESCRIPTIONS: Record<string, string> = {
