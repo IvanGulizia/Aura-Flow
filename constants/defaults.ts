@@ -13,6 +13,8 @@ export const DEFAULT_PARAMS: SimulationParams = {
   wiggleAmplitude: 0, wiggleFrequency: 0, waveSpeed: 0,
   neighborRadius: 150, repulsionForce: 0, attractionForce: 0, alignmentForce: 0, cohesionForce: 0, swarmCursorInfluence: 0,
   mouseInfluenceRadius: 150, mouseRepulsion: 0, mouseAttraction: 0, mouseFalloff: 1,
+  autoLinkStart: false, autoLinkEnd: false, autoLinkRadius: 40, autoLinkStiffness: 0.2,
+  autoLinkBreakingForce: 0, autoLinkBias: 0.5, autoLinkInfluence: 0, autoLinkFalloff: 1, autoLinkDecayEasing: 'linear',
   audioSensitivity: 1, audioToWidth: false, audioToColor: false, audioToWiggle: false,
   fill: { enabled: false, colorSource: 'stroke', customColor: '#574dff', opacity: 0.2, blur: 0, glow: false, rule: 'nonzero', type: 'solid', syncWithStroke: false, gradient: { enabled: false, colors: ['#574dff', '#ffffff'] }, blendMode: 'source-over' }, 
   gradient: { enabled: false, colors: ['#f472b6', '#60a5fa'] },
@@ -30,12 +32,6 @@ export const DEFAULT_SOUND: SoundConfig = {
 
 export const DEFAULT_GLOBAL_TOOL: GlobalToolConfig = { 
   trigger: 'click', radius: 200, force: 1, falloff: 0.5, 
-  connectionStiffness: 0.5, 
-  connectionBreakingForce: 0, 
-  connectionBias: 0.5, 
-  connectionInfluence: 0, 
-  connectionFalloff: 1, 
-  connectionDecayEasing: 'linear',
   connectionsVisible: true 
 };
 
@@ -76,7 +72,7 @@ export const DEFAULT_THEME: UITheme = {
 export const PARAMS_GROUPS = {
   physics: ['mass', 'friction', 'viscosity', 'elasticity', 'tension', 'maxDisplacement', 'gravityX', 'gravityY'],
   shape: ['segmentation', 'smoothing', 'wiggleAmplitude', 'wiggleFrequency', 'waveSpeed', 'closePath', 'closePathRadius'],
-  social: ['neighborRadius', 'repulsionForce', 'attractionForce', 'alignmentForce', 'cohesionForce', 'mouseInfluenceRadius', 'mouseRepulsion', 'mouseAttraction', 'mouseFalloff', 'swarmCursorInfluence'],
+  social: ['neighborRadius', 'repulsionForce', 'attractionForce', 'alignmentForce', 'cohesionForce', 'mouseInfluenceRadius', 'mouseRepulsion', 'mouseAttraction', 'mouseFalloff', 'swarmCursorInfluence', 'autoLinkRadius', 'autoLinkStiffness', 'autoLinkBreakingForce', 'autoLinkBias', 'autoLinkInfluence', 'autoLinkFalloff'],
   visuals: ['strokeWidth', 'opacity', 'blendMode', 'lineCap', 'glowStrength', 'blurStrength', 'seamlessPath', 'pathRounding', 'drawPoints', 'smoothModulation', 'hueShift', 'fill', 'gradient', 'strokeGradientType'], 
   audio: ['audioSensitivity', 'audioToWidth', 'audioToColor', 'audioToWiggle']
 };
@@ -94,7 +90,13 @@ export const PARAM_RANGES: Record<string, {min: number, max: number}> = {
   strokeGradientMidpoint: {min: 0, max: 1},
   fillGradientAngle: {min: 0, max: 360},
   closePathRadius: {min: 10, max: 200},
-  snapFactor: { min: 0.5, max: 10 }
+  snapFactor: { min: 0.5, max: 10 },
+  autoLinkRadius: { min: 5, max: 300 },
+  autoLinkStiffness: { min: 0.01, max: 1 },
+  autoLinkBreakingForce: { min: 0, max: 200 },
+  autoLinkBias: { min: 0, max: 1 },
+  autoLinkInfluence: { min: 0, max: 20 },
+  autoLinkFalloff: { min: 0, max: 1 }
 };
 
 export const PARAM_DESCRIPTIONS: Record<string, string> = {
@@ -118,7 +120,15 @@ export const PARAM_DESCRIPTIONS: Record<string, string> = {
   lineCap: "Shape of the stroke ends: Round, Butt (flat), or Square.",
   swarmCursorInfluence: "Controls when swarm logic applies. 0 = Always active. 1 = Only applies when cursor is near.",
   strokeGradientType: "Linear: Gradient is applied across the bounding box. Path: Gradient follows the curvature of the stroke.",
-  pathRounding: "Corner roundness. 0 = Sharp, 1 = Half-way, 2 = Full Node-to-Node Arc."
+  pathRounding: "Corner roundness. 0 = Sharp, 1 = Half-way, 2 = Full Node-to-Node Arc.",
+  autoLinkStart: "Automatically stick the beginning of the stroke to the nearest neighbor.",
+  autoLinkEnd: "Automatically stick the end of the stroke to the nearest neighbor.",
+  autoLinkRadius: "How close a neighbor must be to trigger auto-sticking.",
+  autoLinkStiffness: "Strength of the glue. 1 = Rigid, 0.01 = Very springy.",
+  autoLinkBreakingForce: "Threshold to snap the link if stretched too far. 0 = Unbreakable.",
+  autoLinkBias: "Who pulls more? 0 = Neighbor pulls new stroke, 1 = New stroke pulls neighbor, 0.5 = Equal.",
+  autoLinkInfluence: "Propagation radius. Affects adjacent points on the stroke.",
+  autoLinkFalloff: "Sharpness of the force decay along the propagation radius."
 };
 
 export const DEFAULT_PRESETS: Preset[] = [

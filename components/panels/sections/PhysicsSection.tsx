@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Slider, SectionHeader } from '../../ui/Controls';
 import { ParamsSectionProps } from './types';

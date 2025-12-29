@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { Stroke, SimulationParams, SoundConfig, GlobalForceType, GlobalToolConfig, GridConfig, SymmetryConfig, Point, Connection, PointReference, ProjectData } from '../types';
 import { audioManager } from '../services/audioService';
@@ -54,19 +53,16 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Refs for State
   const strokesRef = useRef<Stroke[]>([]);
   const connectionsRef = useRef<Connection[]>([]); 
   const activeStrokesRef = useRef<Stroke[]>([]); 
 
-  // Refs for loop & rendering
   const timeRef = useRef<number>(0);
   const reqRef = useRef<number | null>(null);
   const needsRedrawRef = useRef<boolean>(true); 
   const viewTransformRef = useRef({ scale: 1, x: 0, y: 0 });
   const initialBoundsRef = useRef<{ minX: number, maxX: number, minY: number, maxY: number, width: number, height: number, cx: number, cy: number } | null>(null);
 
-  // Input State Refs
   const pointerRef = useRef({ 
       x: -1000, y: -1000, 
       isDown: false, 
@@ -90,7 +86,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       latestProps.current = props;
   });
 
-  // ... (Helper functions) ...
   const getPointerCoordinates = (e: PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return { x: 0, y: 0 };
@@ -140,7 +135,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
 
   const cloneStrokes = (strokes: Stroke[]): Stroke[] => { try { return JSON.parse(JSON.stringify(strokes)); } catch (e) { return []; } };
 
-  // ... (Event Listeners & Effects) ...
   useEffect(() => {
     const canvas = containerRef.current; 
     if (!canvas) return;
@@ -199,9 +193,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         const baseId = Date.now().toString();
         const effectiveSeamless = P.gridConfig.enabled ? false : P.brushParams.seamlessPath;
         const initialPressure = e.pressure !== 0.5 && e.pressure > 0 ? e.pressure : 0.5;
+        
         symPoints.forEach((p, idx) => {
-            newStrokes.push({
-                id: `${baseId}-${idx}`,
+            const strokeId = `${baseId}-${idx}`;
+            const stroke: Stroke = {
+                id: strokeId,
                 index: strokesRef.current.length + idx,
                 points: [{ x: p.x, y: p.y, baseX: p.x, baseY: p.y, vx: 0, vy: 0, pressure: initialPressure }],
                 center: { x: p.x, y: p.y },
@@ -212,7 +208,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 createdAt: Date.now(),
                 phaseOffset: Math.random() * 100,
                 randomSeed: Math.random()
-            });
+            };
+            newStrokes.push(stroke);
+
+            if (stroke.params.autoLinkStart) {
+                const centerDist = 10000;
+                const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, 0.5, 10000, centerDist, 150, 0, 0);
+                const closest = getClosestPoint(p.x, p.y, radius, [strokeId]);
+                if (closest) {
+                    connectionsRef.current.push({
+                        id: `auto-conn-${Date.now()}-${idx}`,
+                        from: { strokeId: strokeId, pointIndex: 0 },
+                        to: closest,
+                        stiffness: stroke.params.autoLinkStiffness,
+                        length: 0,
+                        breakingForce: stroke.params.autoLinkBreakingForce,
+                        bias: stroke.params.autoLinkBias,
+                        influence: stroke.params.autoLinkInfluence,
+                        falloff: stroke.params.autoLinkFalloff,
+                        decayEasing: stroke.params.autoLinkDecayEasing
+                    });
+                }
+            }
         });
         activeStrokesRef.current = newStrokes;
         needsRedrawRef.current = true;
@@ -270,7 +287,18 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         if (P.globalForceTool === 'connect' && pointerRef.current.connectionStart) {
             const closest = getClosestPoint(rawX, rawY, 40);
             if (closest && !(closest.strokeId === pointerRef.current.connectionStart.strokeId && closest.pointIndex === pointerRef.current.connectionStart.pointIndex)) {
-                connectionsRef.current.push({ id: `conn-${Date.now()}`, from: pointerRef.current.connectionStart, to: closest, stiffness: P.globalToolConfig.connectionStiffness, length: 0, breakingForce: P.globalToolConfig.connectionBreakingForce, bias: P.globalToolConfig.connectionBias, influence: P.globalToolConfig.connectionInfluence || 0, falloff: P.globalToolConfig.connectionFalloff || 1, decayEasing: P.globalToolConfig.connectionDecayEasing || 'linear' });
+                connectionsRef.current.push({ 
+                    id: `conn-${Date.now()}`, 
+                    from: pointerRef.current.connectionStart, 
+                    to: closest, 
+                    stiffness: P.brushParams.autoLinkStiffness, 
+                    length: 0, 
+                    breakingForce: P.brushParams.autoLinkBreakingForce, 
+                    bias: P.brushParams.autoLinkBias, 
+                    influence: P.brushParams.autoLinkInfluence, 
+                    falloff: P.brushParams.autoLinkFalloff, 
+                    decayEasing: P.brushParams.autoLinkDecayEasing 
+                });
                 if (preDrawSnapshotRef.current) { historyRef.current.push(preDrawSnapshotRef.current); if (historyRef.current.length > 30) historyRef.current.shift(); redoStackRef.current = []; }
                 needsRedrawRef.current = true;
             }
@@ -278,7 +306,30 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         }
         if (P.globalForceTool !== 'none' || P.interactionMode === 'select') return;
         if (activeStrokesRef.current.length > 0) {
-            activeStrokesRef.current.forEach(s => { if (!strokesRef.current.includes(s)) strokesRef.current.push(s); });
+            activeStrokesRef.current.forEach((stroke, idx) => {
+                if (!strokesRef.current.includes(stroke)) strokesRef.current.push(stroke);
+                if (stroke.params.autoLinkEnd && stroke.points.length > 1) {
+                    const lastIdx = stroke.points.length - 1;
+                    const p = stroke.points[lastIdx];
+                    const centerDist = Math.hypot(stroke.center.x - p.x, stroke.center.y - p.y);
+                    const radius = resolveParam(stroke.params.autoLinkRadius, 'autoLinkRadius', stroke, p.pressure, 10000, centerDist, 150, 1, lastIdx);
+                    const closest = getClosestPoint(p.x, p.y, radius, [stroke.id]);
+                    if (closest) {
+                        connectionsRef.current.push({
+                            id: `auto-end-conn-${Date.now()}-${idx}`,
+                            from: { strokeId: stroke.id, pointIndex: lastIdx },
+                            to: closest,
+                            stiffness: stroke.params.autoLinkStiffness,
+                            length: 0,
+                            breakingForce: stroke.params.autoLinkBreakingForce,
+                            bias: stroke.params.autoLinkBias,
+                            influence: stroke.params.autoLinkInfluence,
+                            falloff: stroke.params.autoLinkFalloff,
+                            decayEasing: stroke.params.autoLinkDecayEasing
+                        });
+                    }
+                }
+            });
             activeStrokesRef.current.forEach(s => {
                 s.originCenter = { ...s.center };
                 if (s.params.closePath && s.points.length > 2) {
@@ -307,7 +358,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     };
   }, []);
 
-  // ... (Standard React Effects) ...
   useEffect(() => { if (selectedStrokeIds.size > 0) { let i = 0; const total = selectedStrokeIds.size; selectedStrokeIds.forEach(id => { const s = strokesRef.current.find(st => st.id === id); if (s) { s.selectionIndex = i; s.selectionTotal = total; } i++; }); } needsRedrawRef.current = true; }, [selectedStrokeIds]);
   useEffect(() => { needsRedrawRef.current = true; }, [gridConfig, symmetryConfig, globalToolConfig, globalForceTool, brushParams, selectedConnectionIds, selectionFilter, embedFit, embedZoom]);
   const updateFitTransform = useCallback(() => {
@@ -364,9 +414,16 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     else if (symmetryConfig.type === 'radial') { const count = Math.max(2, symmetryConfig.count); const rx = x - cx; const ry = y - cy; const radius = Math.hypot(rx, ry); const angle = Math.atan2(ry, rx); for (let i = 1; i < count; i++) { const theta = angle + (Math.PI * 2 / count) * i; points.push({ x: cx + Math.cos(theta) * radius, y: cy + Math.sin(theta) * radius }); } }
     return points;
   };
-  const getClosestPoint = (x: number, y: number, maxDist: number = 30): PointReference | null => {
+  const getClosestPoint = (x: number, y: number, maxDist: number = 30, ignoreStrokeIds: string[] = []): PointReference | null => {
       let minDistSq = maxDist * maxDist; let result: PointReference | null = null;
-      for (const stroke of strokesRef.current) { for (let i = 0; i < stroke.points.length; i++) { const p = stroke.points[i]; const dSq = (p.x - x)**2 + (p.y - y)**2; if (dSq < minDistSq) { minDistSq = dSq; result = { strokeId: stroke.id, pointIndex: i }; } } }
+      for (const stroke of strokesRef.current) { 
+          if (ignoreStrokeIds.includes(stroke.id)) continue;
+          for (let i = 0; i < stroke.points.length; i++) { 
+              const p = stroke.points[i]; 
+              const dSq = (p.x - x)**2 + (p.y - y)**2; 
+              if (dSq < minDistSq) { minDistSq = dSq; result = { strokeId: stroke.id, pointIndex: i }; } 
+          } 
+      }
       return result;
   };
   const getStrokeAtPosition = (x: number, y: number): Stroke | null => {
@@ -440,37 +497,87 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const pointerX = pointerRef.current.x; const pointerY = pointerRef.current.y;
     const hasPointer = pointerRef.current.x > -100;
     pointerRef.current.lastX = pointerX; pointerRef.current.lastY = pointerY;
+
     if (P.globalForceTool !== 'none' && P.globalForceTool !== 'connect' && P.globalForceTool !== 'cursor' && (pointerRef.current.isDown || P.globalToolConfig.trigger === 'hover') && hasPointer) { const influenceRadius = P.globalToolConfig.radius; const strength = P.globalToolConfig.force * 2; const falloffExp = P.globalToolConfig.falloff ? (1 + P.globalToolConfig.falloff * 2) : 1; strokesRef.current.forEach(stroke => { stroke.points.forEach(p => { const dx = pointerX - p.x; const dy = pointerY - p.y; const dSq = dx*dx + dy*dy; if (dSq < influenceRadius * influenceRadius) { const dist = Math.sqrt(dSq); const forceMag = Math.pow(1 - (dist / influenceRadius), falloffExp) * strength; if (P.globalForceTool === 'repulse') { p.vx -= (dx / dist) * forceMag; p.vy -= (dy / dist) * forceMag; } else if (P.globalForceTool === 'attract') { p.vx += (dx / dist) * forceMag; p.vy += (dy / dist) * forceMag; } else if (P.globalForceTool === 'vortex') { p.vx += (-dy / dist) * forceMag; p.vy += (dx / dist) * forceMag; } } }); }); }
-    for (let i = connectionsRef.current.length - 1; i >= 0; i--) { const conn = connectionsRef.current[i]; const s1 = strokesRef.current.find(s => s.id === conn.from.strokeId); const s2 = strokesRef.current.find(s => s.id === conn.to.strokeId); if (s1 && s2) { const p1 = s1.points[conn.from.pointIndex]; const p2 = s2.points[conn.to.pointIndex]; if (p1 && p2) { const dx = p2.x - p1.x; const dy = p2.y - p1.y; const dist = Math.sqrt(dx*dx + dy*dy); if (dist > 0.1) { const diff = dist - conn.length; if (conn.breakingForce > 0 && Math.abs(diff) > conn.breakingForce * 10) { connectionsRef.current.splice(i, 1); continue; } const force = diff * conn.stiffness * 0.5; const fx = (dx / dist) * force; const fy = (dy / dist) * force; const w1 = (conn.bias !== undefined) ? conn.bias : 0.5; const w2 = 1 - w1; p1.vx += fx * w1; p1.vy += fy * w1; p2.vx += -fx * w2; p2.vy += -fy * w2; const influence = conn.influence || 0; const falloff = conn.falloff !== undefined ? conn.falloff : 1; const decayEasing = conn.decayEasing || 'linear'; if (influence > 0) { for (let k = 1; k <= influence; k++) { const factor = 1.0 * (1 - falloff) + (1 - applyEasing(k / (influence + 1), decayEasing)) * falloff; const left1 = s1.points[conn.from.pointIndex - k]; const right1 = s1.points[conn.from.pointIndex + k]; if (left1) { left1.vx += fx * w1 * factor; left1.vy += fy * w1 * factor; } if (right1) { right1.vx += fx * w1 * factor; right1.vy += fy * w1 * factor; } const left2 = s2.points[conn.to.pointIndex - k]; const right2 = s2.points[conn.to.pointIndex + k]; if (left2) { left2.vx += -fx * w2 * factor; left2.vy += -fy * w2 * factor; } if (right2) { right2.vx += -fx * w2 * factor; right2.vy += -fy * w2 * factor; } } } } } } else { connectionsRef.current.splice(i, 1); } }
     
-    // --- UPDATED SWARM PHYSICS LOOP WITH MODULATION ---
+    for (let i = connectionsRef.current.length - 1; i >= 0; i--) { 
+        const conn = connectionsRef.current[i]; 
+        const s1 = strokesRef.current.find(s => s.id === conn.from.strokeId); 
+        const s2 = strokesRef.current.find(s => s.id === conn.to.strokeId); 
+        if (s1 && s2) { 
+            const p1 = s1.points[conn.from.pointIndex]; 
+            const p2 = s2.points[conn.to.pointIndex]; 
+            if (p1 && p2) { 
+                const dx = p2.x - p1.x; 
+                const dy = p2.y - p1.y; 
+                const dist = Math.sqrt(dx*dx + dy*dy); 
+                if (dist > 0.1) { 
+                    const centerDist = hasPointer ? Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y) : 10000;
+                    const p1Dist = hasPointer ? Math.hypot(pointerX - p1.x, pointerY - p1.y) : 10000;
+                    const progress = conn.from.pointIndex / (s1.points.length - 1 || 1);
+
+                    const currentMouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, p1.pressure, p1Dist, centerDist, 150, progress, conn.from.pointIndex);
+                    const stiffness = resolveParam(s1.params.autoLinkStiffness, 'autoLinkStiffness', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
+                    const breakingForce = resolveParam(s1.params.autoLinkBreakingForce, 'autoLinkBreakingForce', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
+                    const bias = resolveParam(s1.params.autoLinkBias, 'autoLinkBias', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
+                    const influence = Math.round(resolveParam(s1.params.autoLinkInfluence, 'autoLinkInfluence', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex));
+                    const falloff = resolveParam(s1.params.autoLinkFalloff, 'autoLinkFalloff', s1, p1.pressure, p1Dist, centerDist, currentMouseRadius, progress, conn.from.pointIndex);
+                    const decayEasing = s1.params.autoLinkDecayEasing;
+
+                    const diff = dist - conn.length; 
+                    if (breakingForce > 0 && Math.abs(diff) > breakingForce * 10) { 
+                        connectionsRef.current.splice(i, 1); 
+                        continue; 
+                    } 
+                    const force = diff * stiffness * 0.5; 
+                    const fx = (dx / dist) * force; 
+                    const fy = (dy / dist) * force; 
+                    const w1 = bias; 
+                    const w2 = 1 - w1; 
+                    p1.vx += fx * w1; p1.vy += fy * w1; 
+                    p2.vx += -fx * w2; p2.vy += -fy * w2; 
+                    
+                    if (influence > 0) { 
+                        for (let k = 1; k <= influence; k++) { 
+                            const factor = 1.0 * (1 - falloff) + (1 - applyEasing(k / (influence + 1), decayEasing)) * falloff; 
+                            const left1 = s1.points[conn.from.pointIndex - k]; 
+                            const right1 = s1.points[conn.from.pointIndex + k]; 
+                            if (left1) { left1.vx += fx * w1 * factor; left1.vy += fy * w1 * factor; } 
+                            if (right1) { right1.vx += fx * w1 * factor; right1.vy += fy * w1 * factor; } 
+                            const left2 = s2.points[conn.to.pointIndex - k]; 
+                            const right2 = s2.points[conn.to.pointIndex + k]; 
+                            if (left2) { left2.vx += -fx * w2 * factor; left2.vy += -fy * w2 * factor; } 
+                            if (right2) { right2.vx += -fx * w2 * factor; right2.vy += -fy * w2 * factor; } 
+                        } 
+                    } 
+                } 
+            } 
+        } else { 
+            connectionsRef.current.splice(i, 1); 
+        } 
+    }
+    
     const swarmForces = new Map<string, { vx: number, vy: number }>(); 
     for (let i = 0; i < strokesRef.current.length; i++) {
         const s1 = strokesRef.current[i];
         if (s1.points.length < 2) continue;
-
-        // Metrics for modulation
         const s1CenterDist = hasPointer ? Math.hypot(pointerX - s1.center.x, pointerY - s1.center.y) : 10000;
-        const s1InfluenceRadius = s1.params.mouseInfluenceRadius || 150;
-
-        // Resolve Modulation Parameters for Swarm (Stroke-level resolution)
-        const r = resolveParam(s1.params.neighborRadius, 'neighborRadius', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
-        const alignF = resolveParam(s1.params.alignmentForce, 'alignmentForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
-        const cohF = resolveParam(s1.params.cohesionForce, 'cohesionForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
-        const repF = resolveParam(s1.params.repulsionForce, 'repulsionForce', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
-        const swarmCursorInf = resolveParam(s1.params.swarmCursorInfluence, 'swarmCursorInfluence', s1, 0.5, 10000, s1CenterDist, s1InfluenceRadius, 0.5, 0);
-
+        
+        const s1MouseRadius = resolveParam(s1.params.mouseInfluenceRadius, 'mouseInfluenceRadius', s1, 0.5, 10000, s1CenterDist, 150, 0.5, 0);
+        const r = resolveParam(s1.params.neighborRadius, 'neighborRadius', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        const alignF = resolveParam(s1.params.alignmentForce, 'alignmentForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        const cohF = resolveParam(s1.params.cohesionForce, 'cohesionForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        const repF = resolveParam(s1.params.repulsionForce, 'repulsionForce', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        const swarmCursorInf = resolveParam(s1.params.swarmCursorInfluence, 'swarmCursorInfluence', s1, 0.5, 10000, s1CenterDist, s1MouseRadius, 0.5, 0);
+        
         if (r <= 0 || (alignF === 0 && cohF === 0 && repF === 0)) continue;
-
         let influenceFactor = 1;
         if (swarmCursorInf > 0 && hasPointer) {
             const distToCursor = s1CenterDist;
-            const range = s1.params.mouseInfluenceRadius || 200;
-            influenceFactor = distToCursor > range ? 0 : 1 - (distToCursor / range);
+            influenceFactor = distToCursor > s1MouseRadius ? 0 : 1 - (distToCursor / s1MouseRadius);
             influenceFactor = 1 * (1 - swarmCursorInf) + influenceFactor * swarmCursorInf;
         }
         if (influenceFactor <= 0.01) continue;
-
         let alignX = 0, alignY = 0, cohX = 0, cohY = 0, sepX = 0, sepY = 0, count = 0;
         for (let j = 0; j < strokesRef.current.length; j++) {
             if (i === j) continue;
@@ -507,8 +614,85 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         }
     }
 
-    for (const stroke of strokesRef.current) { let cx = 0, cy = 0, len = stroke.points.length; let totalSpeed = 0; if (len === 0) continue; for (const p of stroke.points) { cx += p.x; cy += p.y; totalSpeed += Math.hypot(p.vx, p.vy); } stroke.center.x = cx / len; stroke.center.y = cy / len; const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000; const influenceRadius = stroke.params.mouseInfluenceRadius || 150; const swarmF = swarmForces.get(stroke.id) || { vx: 0, vy: 0 }; if (P.isSoundEngineEnabled && stroke.sound.bufferId && stroke.sound.enabled) { const ox = stroke.originCenter?.x ?? stroke.center.x; const oy = stroke.originCenter?.y ?? stroke.center.y; audioManager.updateStrokeSound(stroke.id, stroke.sound.bufferId, { ...stroke.sound, reverb: stroke.sound.reverbSend }, { cursorDist: centerDist, physicsSpeed: (totalSpeed / len) * 20, displacement: { dist: Math.hypot(stroke.center.x - ox, stroke.center.y - oy), x: stroke.center.x - ox, y: stroke.center.y - oy }, timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0 }); }
-      for (let j = 0; j < stroke.points.length; j++) { const p = stroke.points[j]; const progress = j / (len - 1 || 1); const pDist = hasPointer ? Math.hypot(pointerX - p.x, pointerY - p.y) : 10000; const mass = resolveParam(stroke.params.mass, 'mass', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const friction = resolveParam(stroke.params.friction, 'friction', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const tension = resolveParam(stroke.params.tension, 'tension', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const wiggleAmp = resolveParam(stroke.params.wiggleAmplitude, 'wiggleAmplitude', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const mouseRep = resolveParam(stroke.params.mouseRepulsion, 'mouseRepulsion', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const mouseAttr = resolveParam(stroke.params.mouseAttraction, 'mouseAttraction', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const elasticity = resolveParam(stroke.params.elasticity, 'elasticity', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const rGravX = resolveParam(stroke.params.gravityX, 'gravityX', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const rGravY = resolveParam(stroke.params.gravityY, 'gravityY', stroke, p.pressure, pDist, centerDist, influenceRadius, progress, j); const invMass = 1 / Math.max(0.1, mass); const frictionFactor = friction * (1 - stroke.params.viscosity * 0.1); const isWiggling = wiggleAmp > 0 || tension > 0 || (stroke.params.audioToWiggle && globalBass > 0.1); let fx = (p.baseX - p.x) * elasticity + rGravX * mass; let fy = (p.baseY - p.y) * elasticity + rGravY * mass; fx += swarmF.vx * mass; if (isWiggling) { const phase = (j * stroke.params.wiggleFrequency) + (timeRef.current * stroke.params.waveSpeed) + stroke.phaseOffset; let noiseX = Math.sin(phase) * wiggleAmp; let noiseY = Math.cos(phase + 2.3) * wiggleAmp; if (tension > 0) { noiseX += (Math.random() - 0.5) * tension; noiseY += (Math.random() - 0.5) * tension; } if (stroke.params.audioToWiggle) { const boost = 1 + globalBass * stroke.params.audioSensitivity * 5; noiseX *= boost; noiseY *= boost; } fx += noiseX * 0.1; fy += noiseY * 0.1; } p.vx += fx * invMass + swarmF.vx; p.vy += fy * invMass + swarmF.vy; if (hasPointer && (P.globalForceTool === 'none' || P.globalForceTool === 'cursor') && (mouseRep > 0 || mouseAttr > 0) && pDist < influenceRadius) { const dist = pDist; const dx = pointerX - p.x; const dy = pointerY - p.y; const force = Math.pow(1 - (dist / influenceRadius), stroke.params.mouseFalloff || 1); if (mouseRep > 0) { p.vx -= (dx / dist) * force * mouseRep; p.vy -= (dy / dist) * force * mouseRep; } if (mouseAttr > 0) { p.vx += (dx / dist) * force * mouseAttr; p.vy += (dy / dist) * force * mouseAttr; } } p.vx *= frictionFactor; p.vy *= frictionFactor; p.x += p.vx; p.y += p.vy; if (stroke.params.maxDisplacement > 0) { const distFromAnchor = Math.hypot(p.x - p.baseX, p.y - p.baseY); if (distFromAnchor > stroke.params.maxDisplacement) { const angle = Math.atan2(p.y - p.baseY, p.x - p.baseX); p.x = p.baseX + Math.cos(angle) * stroke.params.maxDisplacement; p.y = p.baseY + Math.sin(angle) * stroke.params.maxDisplacement; p.vx *= 0.5; p.vy *= 0.5; } } }
+    for (const stroke of strokesRef.current) { 
+      let cx = 0, cy = 0, len = stroke.points.length; 
+      let totalSpeed = 0; 
+      if (len === 0) continue; 
+      for (const p of stroke.points) { cx += p.x; cy += p.y; totalSpeed += Math.hypot(p.vx, p.vy); } 
+      stroke.center.x = cx / len; stroke.center.y = cy / len; 
+      const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000; 
+      
+      const swarmF = swarmForces.get(stroke.id) || { vx: 0, vy: 0 }; 
+      if (P.isSoundEngineEnabled && stroke.sound.bufferId && stroke.sound.enabled) { 
+          const ox = stroke.originCenter?.x ?? stroke.center.x; 
+          const oy = stroke.originCenter?.y ?? stroke.center.y; 
+          audioManager.updateStrokeSound(stroke.id, stroke.sound.bufferId, { ...stroke.sound, reverb: stroke.sound.reverbSend }, { cursorDist: centerDist, physicsSpeed: (totalSpeed / len) * 20, displacement: { dist: Math.hypot(stroke.center.x - ox, stroke.center.y - oy), x: stroke.center.x - ox, y: stroke.center.y - oy }, timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0 }); 
+      }
+      
+      for (let j = 0; j < stroke.points.length; j++) { 
+          const p = stroke.points[j]; 
+          const progress = j / (len - 1 || 1); 
+          const pDist = hasPointer ? Math.hypot(pointerX - p.x, pointerY - p.y) : 10000; 
+
+          // Resolve rayon first
+          const currentMouseRadius = resolveParam(stroke.params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p.pressure, pDist, centerDist, 150, progress, j); 
+          
+          // Resolve others using the dynamic radius
+          const mass = resolveParam(stroke.params.mass, 'mass', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const friction = resolveParam(stroke.params.friction, 'friction', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const tension = resolveParam(stroke.params.tension, 'tension', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const wiggleAmp = resolveParam(stroke.params.wiggleAmplitude, 'wiggleAmplitude', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const wiggleFreq = resolveParam(stroke.params.wiggleFrequency, 'wiggleFrequency', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const waveSpd = resolveParam(stroke.params.waveSpeed, 'waveSpeed', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const mouseRep = resolveParam(stroke.params.mouseRepulsion, 'mouseRepulsion', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const mouseAttr = resolveParam(stroke.params.mouseAttraction, 'mouseAttraction', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const mouseFall = resolveParam(stroke.params.mouseFalloff, 'mouseFalloff', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const viscosity = resolveParam(stroke.params.viscosity, 'viscosity', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const elasticity = resolveParam(stroke.params.elasticity, 'elasticity', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const rGravX = resolveParam(stroke.params.gravityX, 'gravityX', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+          const rGravY = resolveParam(stroke.params.gravityY, 'gravityY', stroke, p.pressure, pDist, centerDist, currentMouseRadius, progress, j); 
+
+          const invMass = 1 / Math.max(0.1, mass); 
+          const frictionFactor = friction * (1 - viscosity * 0.1); 
+          const isWiggling = wiggleAmp > 0 || tension > 0 || (stroke.params.audioToWiggle && globalBass > 0.1); 
+
+          let fx = (p.baseX - p.x) * elasticity + rGravX * mass; 
+          let fy = (p.baseY - p.y) * elasticity + rGravY * mass; 
+          fx += swarmF.vx * mass; 
+          fy += swarmF.vy * mass; 
+
+          if (isWiggling) { 
+              const phase = (j * wiggleFreq) + (timeRef.current * waveSpd) + stroke.phaseOffset; 
+              let noiseX = Math.sin(phase) * wiggleAmp; 
+              let noiseY = Math.cos(phase + 2.3) * wiggleAmp; 
+              if (tension > 0) { noiseX += (Math.random() - 0.5) * tension; noiseY += (Math.random() - 0.5) * tension; } 
+              if (stroke.params.audioToWiggle) { const boost = 1 + globalBass * stroke.params.audioSensitivity * 5; noiseX *= boost; noiseY *= boost; } 
+              fx += noiseX * 0.1; fy += noiseY * 0.1; 
+          } 
+
+          p.vx += fx * invMass; 
+          p.vy += fy * invMass; 
+
+          if (hasPointer && pDist < currentMouseRadius) { 
+              const dx = pointerX - p.x; const dy = pointerY - p.y; 
+              const force = Math.pow(1 - (pDist / currentMouseRadius), mouseFall); 
+              if (mouseRep > 0) { p.vx -= (dx / pDist) * force * mouseRep; p.vy -= (dy / pDist) * force * mouseRep; } 
+              if (mouseAttr > 0) { p.vx += (dx / pDist) * force * mouseAttr; p.vy += (dy / pDist) * force * mouseAttr; } 
+          } 
+
+          p.vx *= frictionFactor; p.vy *= frictionFactor; 
+          p.x += p.vx; p.y += p.vy; 
+
+          if (stroke.params.maxDisplacement > 0) { 
+              const distFromAnchor = Math.hypot(p.x - p.baseX, p.y - p.baseY); 
+              if (distFromAnchor > stroke.params.maxDisplacement) { 
+                  const angle = Math.atan2(p.y - p.baseY, p.x - p.baseX); 
+                  p.x = p.baseX + Math.cos(angle) * stroke.params.maxDisplacement; 
+                  p.y = p.baseY + Math.sin(angle) * stroke.params.maxDisplacement; 
+                  p.vx *= 0.5; p.vy *= 0.5; 
+              } 
+          } 
+      }
     }
   };
 
@@ -518,182 +702,87 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const P = latestProps.current;
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     const { scale, x, y } = viewTransformRef.current;
     if (scale !== 1 || x !== 0 || y !== 0) { ctx.translate(x, y); ctx.scale(scale, scale); }
-
-    // --- TANGENT-DRIVEN GEOMETRY (CONSTRAINT-BASED) ---
-    // Calculates corner geometry ensuring arcs never overlap or distort beyond allowed limits.
     const getCornerGeometry = (p0: Point, p1: Point, p2: Point, rawRounding: number, isStartTerminal: boolean, isEndTerminal: boolean) => {
-        // 1. Calculate Distances
         const dx1 = p0.x - p1.x, dy1 = p0.y - p1.y;
         const dx2 = p2.x - p1.x, dy2 = p2.y - p1.y;
         const len1 = Math.hypot(dx1, dy1);
         const len2 = Math.hypot(dx2, dy2);
-
-        // Safety check for tiny segments
         if (len1 < 0.1 || len2 < 0.1) return null;
-
-        // 2. The "Constraint" Law
-        // - A Terminal Segment (connected to open end) offers 100% of its length as usable space.
-        // - An Internal Segment (connecting two corners) offers 50% of its length as usable space (to share with neighbor).
         const limit1 = isStartTerminal ? len1 : len1 * 0.5;
         const limit2 = isEndTerminal ? len2 : len2 * 0.5;
-
-        // The maximum possible tangent length for this specific corner is the smallest of the two limits.
         const maxTangent = Math.min(limit1, limit2);
-        
-        // 3. Application of Roundness
-        // Roundness acts as a linear scalar of the AVAILABLE capacity.
-        // Roundness 0 = 0% of maxTangent.
-        // Roundness 1 = 50% of maxTangent.
-        // Roundness 2 = 100% of maxTangent.
-        
-        // Example L-Shape (2 Terminals): maxTangent = Length.
-        // - R=1 -> 0.5 * Length (Classic rounded corner)
-        // - R=2 -> 1.0 * Length (Quarter Circle)
-        
-        // Example U-Shape (Terminal + Internal): maxTangent = 0.5 * Width (Bottom segment is usually shorter or limiting).
-        // - R=1 -> 0.5 * (0.5 * Width) = 0.25 Width (Classic U with flat bottom)
-        // - R=2 -> 1.0 * (0.5 * Width) = 0.5 Width (Full Semi-Circle meeting in middle)
-        
         const ratio = Math.max(0, Math.min(2, rawRounding)) / 2; 
         const tangentLen = maxTangent * ratio;
-
         if (tangentLen < 0.1) return null;
-
-        // 3. Normalized Vectors
-        const u1x = dx1 / len1, u1y = dy1 / len1; // P1 -> P0
-        const u2x = dx2 / len2, u2y = dy2 / len2; // P1 -> P2
-
-        // 4. Calculate Angle & Radius
-        // Dot product gives cos(theta) of the interior angle
+        const u1x = dx1 / len1, u1y = dy1 / len1; 
+        const u2x = dx2 / len2, u2y = dy2 / len2; 
         const dot = u1x * u2x + u1y * u2y;
         const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
         const halfAngle = angle / 2;
-        
-        // Radius derived from Tangent: R = T * tan(alpha/2)
         const radius = tangentLen * Math.tan(halfAngle);
-
-        // 5. Tangent Points (Start/End of Arc)
         const sx = p1.x + u1x * tangentLen;
         const sy = p1.y + u1y * tangentLen;
         const ex = p1.x + u2x * tangentLen;
         const ey = p1.y + u2y * tangentLen;
-
-        // 6. Center Calculation (Bisector Method)
         const bx = u1x + u2x;
         const by = u1y + u2y;
         const bLen = Math.hypot(bx, by);
-
-        if (bLen < 0.001) return null; // Collinear points
-
+        if (bLen < 0.001) return null; 
         const bisectorX = bx / bLen;
         const bisectorY = by / bLen;
         const distToCenter = radius / Math.sin(halfAngle);
-        
         const cx = p1.x + bisectorX * distToCenter;
         const cy = p1.y + bisectorY * distToCenter;
-
-        // 7. Arc Angles
         const startAngle = Math.atan2(sy - cy, sx - cx);
         let endAngle = Math.atan2(ey - cy, ex - cx);
-
-        // 8. Winding Order
         const cross = u1x * u2y - u1y * u2x;
         const ccw = cross < 0; 
-
-        // Normalize Sweep
         let sweep = endAngle - startAngle;
-        if (ccw) {
-            if (sweep > 0) sweep -= Math.PI * 2;
-        } else {
-            if (sweep < 0) sweep += Math.PI * 2;
-        }
+        if (ccw) { if (sweep > 0) sweep -= Math.PI * 2; } else { if (sweep < 0) sweep += Math.PI * 2; }
         endAngle = startAngle + sweep;
-
         return { cx, cy, radius, startAngle, endAngle, sx, sy, ex, ey, ccw };
     };
-
     const tracePath = (ctx: CanvasRenderingContext2D, stroke: Stroke, closePath: boolean) => {
-        // FILTERING: Remove duplicate points or points too close together to fix detection issues
         const rawPoints = stroke.points;
         if (rawPoints.length < 2) return;
-        
         const points: Point[] = [rawPoints[0]];
         for (let k = 1; k < rawPoints.length; k++) {
             const last = points[points.length - 1];
             const curr = rawPoints[k];
             const d = Math.hypot(curr.x - last.x, curr.y - last.y);
-            if (d > 0.1) {
-                points.push(curr);
-            }
+            if (d > 0.1) points.push(curr);
         }
-        
         const len = points.length;
         if (len < 2) return;
-
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
-
         const centerDist = Math.hypot(pointerRef.current.x - stroke.center.x, pointerRef.current.y - stroke.center.y);
-        const influenceRadius = stroke.params.mouseInfluenceRadius || 150;
-        
-        const rawRounding = resolveParam(stroke.params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, influenceRadius, 0.5, 0);
-        // We pass the raw Rounding (0 to 2) to the geometry function
+        const rawMouseRadius = resolveParam(stroke.params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, 0.5, 0, centerDist, 150, 0.5, 0);
+        const rawRounding = resolveParam(stroke.params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, rawMouseRadius, 0.5, 0);
         const roundingParam = Math.max(0, rawRounding);
-
         if (roundingParam <= 0.01) {
             for (let i = 1; i < len; i++) ctx.lineTo(points[i].x, points[i].y);
             if (closePath) ctx.closePath();
         } else {
-            // Draw internal corners
             for (let i = 1; i < len - 1; i++) {
-                // Determine if segments connect to terminals (open ends)
-                // P[i-1] is start terminal if i-1 == 0 AND !closePath
                 const isStartTerminal = (i - 1 === 0) && !closePath;
-                // P[i+1] is end terminal if i+1 == len-1 AND !closePath
                 const isEndTerminal = (i + 1 === len - 1) && !closePath;
-
                 const geom = getCornerGeometry(points[i-1], points[i], points[i+1], roundingParam, isStartTerminal, isEndTerminal);
-                
-                if (geom) {
-                    ctx.lineTo(geom.sx, geom.sy);
-                    // Use calculated radius for perfect fit
-                    // arcTo(controlX, controlY, endX, endY, radius)
-                    // We use geometry.ex as target because math guarantees it lies on P1->P2
-                    ctx.arcTo(points[i].x, points[i].y, geom.ex, geom.ey, geom.radius);
-                } else {
-                    ctx.lineTo(points[i].x, points[i].y);
-                }
+                if (geom) { ctx.lineTo(geom.sx, geom.sy); ctx.arcTo(points[i].x, points[i].y, geom.ex, geom.ey, geom.radius); } else { ctx.lineTo(points[i].x, points[i].y); }
             }
-            
             if (closePath) {
-                // Wrap-around corners (Never terminal in a closed loop)
                 const geomLast = getCornerGeometry(points[len-2], points[len-1], points[0], roundingParam, false, false);
-                if (geomLast) {
-                    ctx.lineTo(geomLast.sx, geomLast.sy);
-                    ctx.arcTo(points[len-1].y, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius);
-                } else {
-                    ctx.lineTo(points[len-1].x, points[len-1].y);
-                }
-
+                if (geomLast) { ctx.lineTo(geomLast.sx, geomLast.sy); ctx.arcTo(points[len-1].x, points[len-1].y, geomLast.ex, geomLast.ey, geomLast.radius); } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
                 const geomFirst = getCornerGeometry(points[len-1], points[0], points[1], roundingParam, false, false);
-                if (geomFirst) {
-                    ctx.lineTo(geomFirst.sx, geomFirst.sy);
-                    ctx.arcTo(points[0].x, points[0].y, geomFirst.ex, geomFirst.ey, geomFirst.radius);
-                } else {
-                    ctx.lineTo(points[0].x, points[0].y);
-                }
+                if (geomFirst) { ctx.lineTo(geomFirst.sx, geomFirst.sy); ctx.arcTo(points[0].x, points[0].y, geomFirst.ex, geomFirst.ey, geomFirst.radius); } else { ctx.lineTo(points[0].x, points[0].y); }
                 ctx.closePath();
-            } else {
-                ctx.lineTo(points[len-1].x, points[len-1].y);
-            }
+            } else { ctx.lineTo(points[len-1].x, points[len-1].y); }
         }
     };
-
     if (P.gridConfig.visible && P.gridConfig.enabled) {
        ctx.fillStyle = hexToRgba(P.gridConfig.color, P.gridConfig.opacity);
        const cx = canvas.width / 2; const cy = canvas.height / 2; const size = Math.max(10, P.gridConfig.size);
@@ -702,7 +791,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
        for (let i = -cols; i <= cols; i++) { const x = cx + i * size; for (let j = -rows; j <= rows; j++) { const y = cy + j * size; ctx.moveTo(x + 1.5, y); ctx.arc(x, y, 1.5, 0, Math.PI * 2); } }
        ctx.fill();
     }
-    
     if (P.symmetryConfig.visible && P.symmetryConfig.enabled) {
         const cx = canvas.width / 2; const cy = canvas.height / 2;
         ctx.strokeStyle = `rgba(0,0,0,0.1)`; ctx.lineWidth = 1; ctx.setLineDash([5, 5]); ctx.beginPath();
@@ -714,7 +802,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         }
         ctx.stroke(); ctx.setLineDash([]);
     }
-
     if (P.globalToolConfig.connectionsVisible) {
         ctx.lineWidth = 1;
         for (const conn of connectionsRef.current) {
@@ -732,20 +819,16 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             }
         }
     }
-    
     if (pointerRef.current.connectionStart && pointerRef.current.isDown) {
         const s = strokesRef.current.find(st => st.id === pointerRef.current.connectionStart!.strokeId);
         const p1 = s ? s.points[pointerRef.current.connectionStart!.pointIndex] : null;
         if (p1) { ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(pointerRef.current.x, pointerRef.current.y); ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]); }
     }
-    
     if (selectionBoxRef.current.active) {
         const sx = selectionBoxRef.current.startX; const sy = selectionBoxRef.current.startY; const w = selectionBoxRef.current.currentX - sx; const h = selectionBoxRef.current.currentY - sy;
         ctx.save(); ctx.fillStyle = 'rgba(79, 70, 229, 0.1)'; ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)'; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.fillRect(sx, sy, w, h); ctx.strokeRect(sx, sy, w, h); ctx.restore();
     }
-
     const strokesToDraw = [...strokesRef.current, ...activeStrokesRef.current];
-
     if (!P.isPlaying) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalCompositeOperation = 'source-over';
         strokesToDraw.forEach(stroke => {
@@ -755,7 +838,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)'; ctx.lineWidth = params.strokeWidth + 6; ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(79, 70, 229, 0.8)'; ctx.stroke(); ctx.shadowBlur = 0;
         });
     }
-
     strokesToDraw.forEach(stroke => {
       if (stroke.points.length === 1) {
           const p = stroke.points[0]; ctx.beginPath(); ctx.arc(p.x, p.y, stroke.params.strokeWidth / 2, 0, Math.PI * 2); ctx.fillStyle = stroke.params.color; ctx.fill(); return;
@@ -763,7 +845,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       if (stroke.points.length < 2) return;
       const { params, points, center } = stroke;
       const centerDist = Math.hypot(pointerRef.current.x - center.x, pointerRef.current.y - center.y);
-      const influenceRadius = params.mouseInfluenceRadius || 150;
+      const currentMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, 0.5, 0, centerDist, 150, 0.5, 0);
 
       if (params.fill.enabled) {
           tracePath(ctx, stroke, params.closePath);
@@ -780,18 +862,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
           if (params.fill.blur > 0) ctx.filter = `blur(${params.fill.blur}px)`;
           ctx.fill(params.fill.rule); ctx.filter = 'none'; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
       }
-
       if (params.opacity > 0 && params.strokeWidth > 0) {
         ctx.lineCap = params.lineCap || 'round'; ctx.lineJoin = 'round'; ctx.globalCompositeOperation = params.blendMode;
         if (params.blurStrength > 0 && !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth) { ctx.filter = `blur(${params.blurStrength}px)`; } else { ctx.filter = 'none'; }
-        
         const isModActive = (m?: any) => m && m.source !== 'none';
-        const canBatchDraw = !params.smoothModulation && 
-                             params.strokeGradientType === 'linear' && 
-                             !isModActive(params.modulations?.strokeWidth) && 
-                             !isModActive(params.modulations?.opacity) && 
-                             !isModActive(params.modulations?.hueShift);
-
+        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !isModActive(params.modulations?.strokeWidth) && !isModActive(params.modulations?.opacity) && !isModActive(params.modulations?.hueShift);
         if (canBatchDraw) {
             const bounds = getStrokeBounds(stroke); const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180; const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
             const gx1 = bounds.cx - Math.cos(angleRad) * r; const gy1 = bounds.cy - Math.sin(angleRad) * r; const gx2 = bounds.cx + Math.cos(angleRad) * r; const gy2 = bounds.cy + Math.sin(angleRad) * r;
@@ -806,7 +881,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             if (params.glowStrength > 0) { ctx.shadowColor = strokeStyle as string; ctx.shadowBlur = params.glowStrength; }
             ctx.strokeStyle = strokeStyle; ctx.lineWidth = params.strokeWidth; ctx.globalAlpha = params.opacity; ctx.stroke(); ctx.shadowBlur = 0;
         } else {
-            // --- MANUAL SEGMENT DRAWING (Modulated) ---
             const rawPoints = stroke.points;
             if (rawPoints.length < 2) return;
             const points: Point[] = [rawPoints[0]];
@@ -817,128 +891,89 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (d > 0.1) points.push(curr);
             }
             const len = points.length;
-
-            const rawRounding = resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, influenceRadius, 0.5, 0);
-            const roundingRatio = Math.max(0, rawRounding);
-
+            const roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, 0, centerDist, currentMouseRadius, 0.5, 0));
             let currentX = points[0].x;
             let currentY = points[0].y;
-
             if (points.length > 1) {
                 const loopLimit = params.closePath ? points.length : points.length - 1;
-
                 for (let i = 1; i <= loopLimit; i++) {
                     const p0 = points[(i - 1) % points.length];
                     const p1 = points[i % points.length];
                     const p2 = points[(i + 1) % points.length];
-                    
                     const isStartTerminal = (i - 1 === 0) && !params.closePath;
                     const isEndTerminal = (i + 1 === points.length - 1) && !params.closePath;
-
                     const geom = getCornerGeometry(p0, p1, p2, roundingRatio, isStartTerminal, isEndTerminal);
-                    
                     const endX = geom ? geom.sx : p1.x;
                     const endY = geom ? geom.sy : p1.y;
-                    
                     const pDist = Math.hypot(pointerRef.current.x - p0.x, pointerRef.current.y - p0.y);
                     const progress = (i-1) / points.length;
-                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
-                    const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
+                    
+                    const pointMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p0.pressure, pDist, centerDist, 150, progress, i-1);
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
-                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pDist, centerDist, influenceRadius, progress, i-1);
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pDist, centerDist, pointMouseRadius, progress, i-1);
                          if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
                          c = getShiftedColor(c, shift);
                     }
-                    
                     if (params.glowStrength > 0) { ctx.shadowColor = c; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
                     ctx.strokeStyle = c;
                     ctx.lineWidth = Math.max(0.1, width);
                     ctx.globalAlpha = opacity;
                     ctx.lineCap = 'round';
-                    
                     ctx.beginPath();
                     ctx.moveTo(currentX, currentY);
                     ctx.lineTo(endX, endY);
                     ctx.stroke();
-                    
                     if (geom) {
                         const steps = 8;
                         let totalSweep = geom.endAngle - geom.startAngle;
-                        
-                        if (geom.ccw) {
-                            if (totalSweep > 0) totalSweep -= Math.PI * 2;
-                        } else {
-                            if (totalSweep < 0) totalSweep += Math.PI * 2;
-                        }
-
+                        if (geom.ccw) { if (totalSweep > 0) totalSweep -= Math.PI * 2; } else { if (totalSweep < 0) totalSweep += Math.PI * 2; }
                         let prevArcX = geom.sx;
                         let prevArcY = geom.sy;
-                        
                         for (let s = 1; s <= steps; s++) {
                             const t = s / steps;
                             const angle = geom.startAngle + totalSweep * t;
                             const bx = geom.cx + Math.cos(angle) * geom.radius;
                             const by = geom.cy + Math.sin(angle) * geom.radius;
-                            
                             const p1Dist = Math.hypot(pointerRef.current.x - bx, pointerRef.current.y - by);
                             const p1Prog = i / points.length;
-                            
-                            const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i);
-                            const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i);
+                            const arcMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, p1.pressure, p1Dist, centerDist, 150, p1Prog, i);
+                            const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i);
+                            const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i);
                             let cArc = params.color;
-                            
                             if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { 
                                 let shift = params.hueShift; 
-                                if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, p1Dist, centerDist, influenceRadius, p1Prog, i); 
+                                if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, p1Dist, centerDist, arcMouseRadius, p1Prog, i); 
                                 if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180; 
                                 cArc = getShiftedColor(cArc, shift); 
                             }
-
                             if (params.glowStrength > 0) { ctx.shadowColor = cArc; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
-                            ctx.strokeStyle = cArc;
-                            ctx.lineWidth = Math.max(0.1, wArc);
-                            ctx.globalAlpha = oArc;
-                            
-                            ctx.beginPath();
-                            ctx.moveTo(prevArcX, prevArcY);
-                            ctx.lineTo(bx, by);
-                            ctx.stroke();
-                            
-                            prevArcX = bx;
-                            prevArcY = by;
+                            ctx.strokeStyle = cArc; ctx.lineWidth = Math.max(0.1, wArc); ctx.globalAlpha = oArc;
+                            ctx.beginPath(); ctx.moveTo(prevArcX, prevArcY); ctx.lineTo(bx, by); ctx.stroke();
+                            prevArcX = bx; prevArcY = by;
                         }
-                        currentX = prevArcX; // Should match geom.ex
-                        currentY = prevArcY;
-                    } else {
-                        currentX = p1.x;
-                        currentY = p1.y;
-                    }
+                        currentX = prevArcX; currentY = prevArcY;
+                    } else { currentX = p1.x; currentY = p1.y; }
                 }
-                
                 if (!params.closePath) {
                     const lastIdx = points.length - 1;
                     const pLast = points[lastIdx];
-                    
                     const pDist = Math.hypot(pointerRef.current.x - pLast.x, pointerRef.current.y - pLast.y);
-                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
-                    const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
+                    const lastMouseRadius = resolveParam(params.mouseInfluenceRadius, 'mouseInfluenceRadius', stroke, pLast.pressure, pDist, centerDist, 150, 1, lastIdx);
+                    const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
+                    const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
-                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pDist, centerDist, influenceRadius, 1, lastIdx);
+                         if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pDist, centerDist, lastMouseRadius, 1, lastIdx);
                          if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
                          c = getShiftedColor(c, shift);
                     }
-                    
-                    ctx.strokeStyle = c;
-                    ctx.lineWidth = Math.max(0.1, width);
-                    ctx.globalAlpha = opacity;
-                    ctx.beginPath();
-                    ctx.moveTo(currentX, currentY);
-                    ctx.lineTo(pLast.x, pLast.y);
-                    ctx.stroke();
+                    ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.1, width); ctx.globalAlpha = opacity;
+                    ctx.beginPath(); ctx.moveTo(currentX, currentY); ctx.lineTo(pLast.x, pLast.y); ctx.stroke();
                 }
             }
         }
@@ -949,25 +984,18 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     });
     ctx.restore();
   };
-
   const animate = (time: number) => {
     const P = latestProps.current;
     const needsUpdate = P.isPlaying || pointerRef.current.isDown || pointerRef.current.hasMoved || selectionBoxRef.current.active || needsRedrawRef.current;
     if (P.ecoMode && !needsUpdate) { /* Skip */ } else { updatePhysics(); draw(); needsRedrawRef.current = false; }
     reqRef.current = requestAnimationFrame(animate);
   };
-
   useEffect(() => {
     reqRef.current = requestAnimationFrame(animate);
     return () => { if (reqRef.current) cancelAnimationFrame(reqRef.current); };
   }, []);
-
   return (
-    <div 
-        ref={containerRef} 
-        className={`w-full h-full touch-none ${interactionMode === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
-        style={{ touchAction: 'none' }} // Critical for iOS
-    >
+    <div ref={containerRef} className={`w-full h-full touch-none ${interactionMode === 'select' ? 'cursor-default' : 'cursor-crosshair'}`} style={{ touchAction: 'none' }}>
       <canvas ref={canvasRef} className="block w-full h-full" />
     </div>
   );

@@ -53,13 +53,6 @@ export interface GlobalToolConfig {
   radius: number;
   force: number;
   falloff: number; // 0 to 1 (Soft to Sharp)
-  // LINK TOOL CONFIGS
-  connectionStiffness: number; 
-  connectionBreakingForce: number; // 0 = Unbreakable, >0 = Threshold to break
-  connectionBias: number; // 0 = A pulls B, 0.5 = Equal, 1 = B pulls A
-  connectionInfluence: number; // Number of adjacent points affected (0 = none)
-  connectionFalloff: number; // 0 = Constant propagation, 1 = Linear decay
-  connectionDecayEasing: EasingMode; // NEW: Curve for propagation decay
   connectionsVisible: boolean;
 }
 
@@ -231,6 +224,17 @@ export interface SimulationParams {
   mouseRepulsion: number;
   mouseAttraction: number;
   mouseFalloff: number; // 1 = Linear, 2 = Quadratic (Sharper), etc.
+
+  // --- MAGNETIC BONDING (Auto-stick) ---
+  autoLinkStart: boolean;
+  autoLinkEnd: boolean;
+  autoLinkRadius: number;
+  autoLinkStiffness: number;
+  autoLinkBreakingForce: number;
+  autoLinkBias: number;
+  autoLinkInfluence: number;
+  autoLinkFalloff: number;
+  autoLinkDecayEasing: EasingMode;
   
   // --- AUDIO REACTIVITY ---
   audioSensitivity: number;

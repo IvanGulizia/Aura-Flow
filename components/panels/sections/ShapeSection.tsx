@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Spline as SplineIcon } from 'lucide-react';
 import { Slider, Toggle, SectionHeader } from '../../ui/Controls';

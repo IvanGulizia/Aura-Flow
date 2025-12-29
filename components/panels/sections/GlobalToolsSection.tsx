@@ -33,19 +33,16 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
             {globalForceTool === 'connect' ? (
               <div className="animate-fade-in">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1"><Network size={10} /> Link Settings</span>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1"><Network size={10} /> View Options</span>
                   <div className="flex gap-2">
                     <button onClick={() => setGlobalToolConfig(prev => ({ ...prev, connectionsVisible: !prev.connectionsVisible }))} className="text-slate-400 hover:text-indigo-600 transition-colors" title={globalToolConfig.connectionsVisible ? "Hide Links" : "Show Links"} > {globalToolConfig.connectionsVisible ? <Eye size={14} /> : <EyeOff size={14} />} </button>
                     <button onClick={() => setDeleteAllLinksTrigger(t => t+1)} className="text-slate-400 hover:text-red-500 transition-colors" title="Delete All Links" > <Unplug size={14} /> </button>
                   </div>
                 </div>
-                <Slider label="Stiffness" value={globalToolConfig.connectionStiffness} min={0.01} max={1} step={0.01} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionStiffness: v }))} />
-                <Slider label="Breaking Force" value={globalToolConfig.connectionBreakingForce} min={0} max={200} step={1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionBreakingForce: v }))} />
-                <Slider label="Influence (Bias)" value={globalToolConfig.connectionBias} min={0} max={1} step={0.1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionBias: v }))} />
-                <Slider label="Propagation" value={globalToolConfig.connectionInfluence} min={0} max={20} step={1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionInfluence: v }))} />
-                <Slider label="Decay" value={globalToolConfig.connectionFalloff} min={0} max={1} step={0.1} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionFalloff: v }))} />
-                <Select label="Decay Curve" value={globalToolConfig.connectionDecayEasing || 'linear'} options={['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'step']} onChange={(v) => setGlobalToolConfig(prev => ({ ...prev, connectionDecayEasing: v as EasingMode }))} />
-                <div className="text-[9px] text-slate-500 italic p-2 bg-blue-50 border border-blue-100 rounded mt-2"> Drag between points to connect. Connect creates a spring physics constraint. </div>
+                <div className="text-[9px] text-slate-500 italic p-2 bg-blue-50 border border-blue-100 rounded mt-2"> 
+                  Drag between points to connect. <br/>
+                  <span className="font-bold text-indigo-600">Note:</span> Manual links now use the <span className="underline">current Brush Settings</span> (Interaction -> Magnetic Bonding) for stiffness and strength.
+                </div>
               </div>
             ) : globalForceTool !== 'cursor' ? (
               <div className="animate-fade-in">
