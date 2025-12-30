@@ -245,9 +245,16 @@ export default function App() {
 
   const toggleLock = (key: string) => setLockedParams(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
 
-  const toggleSoundEngine = async () => {
-    if (!isSoundEngineEnabled) { await audioManager.initAudioContext(); audioManager.setMasterVolume(1); setIsSoundEngineEnabled(true); } 
-    else { audioManager.setMasterVolume(0); setIsSoundEngineEnabled(false); }
+  const toggleSoundEngine = async (forceState?: boolean) => {
+    const targetState = forceState !== undefined ? forceState : !isSoundEngineEnabled;
+    if (targetState) { 
+        await audioManager.initAudioContext(); 
+        audioManager.setMasterVolume(1); 
+        setIsSoundEngineEnabled(true); 
+    } else { 
+        audioManager.setMasterVolume(0); 
+        setIsSoundEngineEnabled(false); 
+    }
   };
 
   const toggleMic = async () => {
@@ -514,8 +521,43 @@ export default function App() {
   const triggerImportPresets = () => presetFileInputRef.current?.click();
   const handleImportPresets = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const data = JSON.parse(ev.target?.result as string); if (Array.isArray(data)) setPresets(prev => [...prev, ...data]); } catch (err) {} }; reader.readAsText(file); e.target.value = ''; };
 
-  const handleSoundUpload = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const arrayBuffer = ev.target?.result as ArrayBuffer; const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); const audioBuffer = await ctx.decodeAudioData(arrayBuffer); const bufferId = `upload-${Date.now()}`; audioManager.addBuffer(bufferId, audioBuffer); if (!selectedStrokeId) { setBrushSound(prev => ({...prev, bufferId, enabled: true})); } else { setSelectedStrokeSound(prev => prev ? ({...prev, bufferId, enabled: true}) : null); } }; reader.readAsArrayBuffer(file); e.target.value = ''; };
-  const handleBufferReady = (buffer: AudioBuffer) => { const bufferId = `rec-${Date.now()}`; audioManager.addBuffer(bufferId, buffer); if (!selectedStrokeId) { setBrushSound(prev => ({...prev, bufferId, enabled: true})); } else { setSelectedStrokeSound(prev => prev ? ({...prev, bufferId, enabled: true}) : null); } };
+  const handleSoundUpload = (e: React.ChangeEvent<HTMLInputElement>) => { 
+      const file = e.target.files?.[0]; 
+      if (!file) return; 
+      const reader = new FileReader(); 
+      reader.onload = async (ev) => { 
+          const arrayBuffer = ev.target?.result as ArrayBuffer; 
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); 
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer); 
+          const bufferId = `upload-${Date.now()}`; 
+          audioManager.addBuffer(bufferId, audioBuffer); 
+          
+          // Auto-enable sound engine if user uploads a sound
+          toggleSoundEngine(true);
+
+          if (!selectedStrokeId) { 
+              setBrushSound(prev => ({...prev, bufferId, enabled: true})); 
+          } else { 
+              setSelectedStrokeSound(prev => prev ? ({...prev, bufferId, enabled: true}) : null); 
+          } 
+      }; 
+      reader.readAsArrayBuffer(file); 
+      e.target.value = ''; 
+  };
+  
+  const handleBufferReady = (buffer: AudioBuffer) => { 
+      const bufferId = `rec-${Date.now()}`; 
+      audioManager.addBuffer(bufferId, buffer); 
+      
+      toggleSoundEngine(true);
+
+      if (!selectedStrokeId) { 
+          setBrushSound(prev => ({...prev, bufferId, enabled: true})); 
+      } else { 
+          setSelectedStrokeSound(prev => prev ? ({...prev, bufferId, enabled: true}) : null); 
+      } 
+  };
+  
   const removeSound = () => { if (selectedStrokeId) { setSelectedStrokeSound(prev => prev ? ({...prev, bufferId: null, enabled: false}) : null); } else { setBrushSound(prev => ({...prev, bufferId: null, enabled: false})); } };
 
   const setForceTool = (tool: GlobalForceType) => { if (tool !== 'none') { setInteractionMode('draw'); } setGlobalForceTool(tool); };
@@ -654,7 +696,7 @@ export default function App() {
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0" />
               <IconButton icon={isMicEnabled ? <Mic size={18} className="text-red-500 animate-pulse" /> : <MicOff size={18} />} onClick={toggleMic} active={isMicEnabled} label="Mic Reactivity" />
               <IconButton icon={isPlaying ? <Pause size={18} /> : <Play size={18} />} onClick={() => setIsPlaying(!isPlaying)} active={isPlaying} label={isPlaying ? "Pause" : "Play"} />
-              <IconButton icon={isSoundEngineEnabled ? <Speaker size={18} /> : <VolumeX size={18} />} onClick={toggleSoundEngine} active={isSoundEngineEnabled} label={isSoundEngineEnabled ? "Sound ON" : "Sound OFF"} />
+              <IconButton icon={isSoundEngineEnabled ? <Speaker size={18} /> : <VolumeX size={18} />} onClick={() => toggleSoundEngine()} active={isSoundEngineEnabled} label={isSoundEngineEnabled ? "Sound ON" : "Sound OFF"} />
               <div className="w-px h-6 bg-slate-300/50 mx-1 shrink-0 hidden md:block" />
               <IconButton icon={<Undo size={18} />} onClick={() => setUndoTrigger(t => t + 1)} label="Undo" className="hidden md:flex" />
               <IconButton icon={<Redo size={18} />} onClick={() => setRedoTrigger(t => t + 1)} label="Redo" className="hidden md:flex" />

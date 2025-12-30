@@ -9,77 +9,220 @@ export interface AudioSpectralData {
   treble: number;   // 4000 Hz+
 }
 
+// Internal class to handle individual stroke audio state
+class StrokeAudioPlayer {
+  private ctx: AudioContext;
+  private buffer: AudioBuffer;
+  private source: AudioBufferSourceNode | null = null;
+  private gain: GainNode;
+  private analyser: AnalyserNode;
+  private panner: StereoPannerNode; 
+  private isPlaying: boolean = false;
+  private lastScrubTime: number = 0;
+  
+  // Smoothing for amplitude analysis
+  private lastAmplitude: number = 0;
+
+  constructor(ctx: AudioContext, buffer: AudioBuffer, destination: AudioNode) {
+    this.ctx = ctx;
+    this.buffer = buffer;
+    
+    // Graph: Source -> Analyser (Pre-Fader) -> Gain -> Panner -> Destination
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 512; // Larger window for better RMS stability
+    this.analyser.smoothingTimeConstant = 0.3;
+
+    this.gain = ctx.createGain();
+    this.gain.gain.value = 0; // Controlled by updateVolume
+
+    this.panner = ctx.createStereoPanner();
+
+    // Connect the chain (Source will be connected in start/play)
+    this.analyser.connect(this.gain);
+    this.gain.connect(this.panner);
+    this.panner.connect(destination);
+  }
+
+  // Continuous Loop Mode
+  public startLoop(playbackRate: number = 1) {
+    // If playing, just check if we need to update rate
+    if (this.isPlaying && this.source) {
+       try {
+         this.source.playbackRate.setTargetAtTime(Math.max(0.01, playbackRate), this.ctx.currentTime, 0.1);
+       } catch (e) {
+         // Source might have stopped unexpectedly
+         this.isPlaying = false;
+       }
+    }
+
+    if (!this.isPlaying) {
+      this.source = this.ctx.createBufferSource();
+      this.source.buffer = this.buffer;
+      this.source.loop = true;
+      this.source.playbackRate.value = Math.max(0.01, playbackRate);
+      
+      this.source.connect(this.analyser);
+      this.source.start();
+      this.isPlaying = true;
+    }
+  }
+
+  // Timeline Scrub Mode
+  public scrub(position01: number, playbackRate: number = 1, grainSize: number = 0.1) {
+    // Stop continuous loop if it was running
+    if (this.source && this.source.loop) {
+        this.stop();
+    }
+
+    const now = this.ctx.currentTime;
+    if (now - this.lastScrubTime < grainSize * 0.5) return; // Limit density
+
+    const offset = Math.max(0, Math.min(1, position01)) * this.buffer.duration;
+    
+    const grain = this.ctx.createBufferSource();
+    grain.buffer = this.buffer;
+    grain.playbackRate.value = playbackRate;
+    
+    // Envelope to avoid clicks
+    const envGain = this.ctx.createGain();
+    envGain.gain.setValueAtTime(0, now);
+    envGain.gain.linearRampToValueAtTime(1, now + 0.01);
+    envGain.gain.exponentialRampToValueAtTime(0.001, now + grainSize);
+
+    grain.connect(envGain);
+    envGain.connect(this.analyser); // Connect to main chain for analysis
+    
+    grain.start(now, offset);
+    // grain.stop is handled by garbage collection after playback, but we can be explicit
+    grain.stop(now + grainSize + 0.2);
+    
+    this.lastScrubTime = now;
+  }
+
+  public updateVolume(volume: number, pan: number = 0) {
+    if (!Number.isFinite(volume)) return;
+    this.gain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.1);
+    this.panner.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), this.ctx.currentTime, 0.1);
+  }
+
+  public stop() {
+    if (this.source) {
+      try { this.source.stop(); } catch(e) {}
+      try { this.source.disconnect(); } catch(e) {}
+      this.source = null;
+    }
+    this.isPlaying = false;
+  }
+
+  public destroy() {
+    this.stop();
+    this.gain.disconnect();
+    this.analyser.disconnect();
+    this.panner.disconnect();
+  }
+
+  // Returns amplitude 0-1 (Pre-Fader)
+  public getAmplitude(): number {
+    if (!this.analyser) return 0;
+    const data = new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteTimeDomainData(data);
+    
+    let sum = 0;
+    // RMS Calculation
+    for(let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    
+    // Boost signal for visual usability (RMS is typically low)
+    const boosted = rms * 5.0; 
+    
+    this.lastAmplitude = this.lastAmplitude * 0.7 + boosted * 0.3;
+    return Math.min(1, this.lastAmplitude);
+  }
+}
+
 export class AudioManager {
   private audioContext: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private reverbNode: ConvolverNode | null = null;
+  private limiter: DynamicsCompressorNode | null = null;
   
-  // Input
+  // Input (Mic)
   private globalAnalyser: AnalyserNode | null = null;
   private globalSource: MediaStreamAudioSourceNode | null = null;
   private micStream: MediaStream | null = null;
   
   // Analysis Config
   public smoothing: number = 0.8;
-  public noiseFloor: number = 0.1; // Threshold below which signal is ignored (0-1)
+  public noiseFloor: number = 0.1;
   
   private lastSpectralData: AudioSpectralData = {
       average: 0, sub: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0
   };
-  private lastAnalysisTime: number = 0; // NEW: Frame limiter
+  private lastAnalysisTime: number = 0;
 
-  // Stroke specific audio
-  private buffers: Map<string, AudioBuffer> = new Map(); // bufferId -> AudioBuffer
+  // Assets
+  private buffers: Map<string, AudioBuffer> = new Map(); 
   
-  // Continuous Loop Sources
-  private activeLoops: Map<string, { source: AudioBufferSourceNode, gain: GainNode, analyser: AnalyserNode }> = new Map(); 
-  
-  // Granular State (for Timeline mode)
-  private lastGrainTime: Map<string, number> = new Map();
+  // Active Players (Stroke ID -> Player)
+  private players: Map<string, StrokeAudioPlayer> = new Map();
 
   public isEngineReady: boolean = false;
   public isMicActive: boolean = false;
 
-  // Initialize the Audio Context (Required for any playback)
   async initAudioContext(): Promise<void> {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
     }
     if (this.isEngineReady) return;
 
-    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    this.masterGain = this.audioContext.createGain();
-    this.masterGain.connect(this.audioContext.destination);
+    const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+    this.audioContext = new AudioCtor({ latencyHint: 'interactive' });
     
-    // Simple Reverb Impulse (Synthetic)
+    // Master Chain: Reverb -> Limiter -> MasterGain -> Dest
+    this.masterGain = this.audioContext.createGain();
+    this.limiter = this.audioContext.createDynamicsCompressor();
+    this.limiter.threshold.value = -1; // Gentle compression
+    this.limiter.ratio.value = 12;
+
     this.reverbNode = this.audioContext.createConvolver();
-    const rate = this.audioContext.sampleRate;
-    const length = rate * 2; // 2 seconds tail
-    const impulse = this.audioContext.createBuffer(2, length, rate);
-    for (let channel = 0; channel < 2; channel++) {
-       const channelData = impulse.getChannelData(channel);
-       for (let i = 0; i < length; i++) {
-          channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 4);
-       }
-    }
-    this.reverbNode.buffer = impulse;
-    this.reverbNode.connect(this.masterGain);
+    await this.generateReverbImpulse();
+
+    this.reverbNode.connect(this.limiter);
+    this.limiter.connect(this.masterGain);
+    this.masterGain.connect(this.audioContext.destination);
 
     this.isEngineReady = true;
   }
 
-  // Toggle Microphone Input (Separate from playback)
+  private async generateReverbImpulse() {
+    if (!this.audioContext || !this.reverbNode) return;
+    const rate = this.audioContext.sampleRate;
+    const length = rate * 2.0; // 2s tail
+    const impulse = this.audioContext.createBuffer(2, length, rate);
+    for (let channel = 0; channel < 2; channel++) {
+       const channelData = impulse.getChannelData(channel);
+       for (let i = 0; i < length; i++) {
+          const decay = Math.pow(1 - i / length, 3);
+          channelData[i] = (Math.random() * 2 - 1) * decay * 0.5;
+       }
+    }
+    this.reverbNode.buffer = impulse;
+  }
+
   async toggleMic(active: boolean): Promise<void> {
     if (!this.audioContext) await this.initAudioContext();
     if (!this.audioContext) return;
 
     if (active) {
        try {
-         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false } });
          this.micStream = stream;
          this.globalAnalyser = this.audioContext.createAnalyser();
-         this.globalAnalyser.fftSize = 2048; // Higher resolution for better bass detection
-         this.globalAnalyser.smoothingTimeConstant = 0; // We handle smoothing manually for more control
+         this.globalAnalyser.fftSize = 2048; 
+         this.globalAnalyser.smoothingTimeConstant = 0; 
          this.globalSource = this.audioContext.createMediaStreamSource(stream);
          this.globalSource.connect(this.globalAnalyser);
          this.isMicActive = true;
@@ -101,13 +244,11 @@ export class AudioManager {
     }
   }
 
-  // --- RECORDING ---
   async recordAudio(duration: number = 3000): Promise<AudioBuffer | null> {
     if (!this.audioContext) await this.initAudioContext();
     if (!this.audioContext) return null;
 
     try {
-       // We need a temporary stream for recording if mic is not already active
        let stream = this.micStream;
        let tempStream = false;
        if (!stream) {
@@ -140,6 +281,7 @@ export class AudioManager {
   }
 
   addBuffer(id: string, buffer: AudioBuffer) {
+    if (!buffer) return;
     this.buffers.set(id, buffer);
   }
 
@@ -148,12 +290,12 @@ export class AudioManager {
   }
 
   setMasterVolume(val: number) {
-    if (this.masterGain) {
-      this.masterGain.gain.setTargetAtTime(val, this.audioContext?.currentTime || 0, 0.1);
+    if (this.masterGain && this.audioContext) {
+      this.masterGain.gain.setTargetAtTime(val, this.audioContext.currentTime, 0.1);
     }
   }
 
-  // --- CORE PLAYBACK LOGIC ---
+  // --- PLAYBACK ---
   updateStrokeSound(
     strokeId: string, 
     bufferId: string | null, 
@@ -162,182 +304,100 @@ export class AudioManager {
        volumeSource: 'manual' | 'velocity' | 'displacement-dist' | 'displacement-x' | 'displacement-y' | 'proximity',
        minVolume: number, maxVolume: number,
        minPitch: number, maxPitch: number,
-       reverb: number,
+       reverbSend: number,
        grainSize: number
     }, 
     metrics: {
       cursorDist: number, 
-      physicsSpeed: number, // velocity
+      physicsSpeed: number, 
       displacement: { dist: number, x: number, y: number },
-      timelinePos: number // 0 to 1 (cursor projection on path)
+      timelinePos: number
     }
   ) {
-    if (!this.audioContext || !bufferId) return;
-    const buffer = this.buffers.get(bufferId);
-    if (!buffer) return;
-
-    // 1. Calculate Volume Drive based on source
-    let drive = 0;
+    if (!this.audioContext || !bufferId || !this.isEngineReady) return;
     
-    switch (config.volumeSource) {
-      case 'manual': 
-        drive = 1; 
-        break;
-      case 'velocity':
-        drive = Math.min(1, metrics.physicsSpeed / 10); // 10 is arbitrary max speed
-        break;
-      case 'proximity':
-        drive = Math.max(0, 1 - (metrics.cursorDist / 300));
-        drive = Math.pow(drive, 2);
-        break;
-      case 'displacement-dist':
-        drive = Math.min(1, metrics.displacement.dist / 200);
-        break;
-      case 'displacement-x':
-        drive = Math.min(1, Math.abs(metrics.displacement.x) / 100);
-        break;
-      case 'displacement-y':
-        drive = Math.min(1, Math.abs(metrics.displacement.y) / 100);
-        break;
+    // 1. Get or Create Player
+    let player = this.players.get(strokeId);
+    if (!player) {
+        const buffer = this.buffers.get(bufferId);
+        if (!buffer) return;
+        
+        const playerBus = this.audioContext.createGain();
+        playerBus.connect(this.limiter!); // Dry path
+        
+        player = new StrokeAudioPlayer(this.audioContext, buffer, playerBus);
+        
+        // Reverb Send
+        const reverbGain = this.audioContext.createGain();
+        reverbGain.gain.value = config.reverbSend;
+        playerBus.connect(reverbGain);
+        reverbGain.connect(this.reverbNode!);
+
+        this.players.set(strokeId, player);
     }
 
-    if (!Number.isFinite(drive)) drive = 0;
+    // 2. Calculate Volume & Pitch
+    let drive = 0;
+    switch (config.volumeSource) {
+      case 'manual': drive = 1; break;
+      case 'velocity': drive = Math.min(1, metrics.physicsSpeed / 20); break;
+      case 'proximity': drive = Math.max(0, 1 - (metrics.cursorDist / 300)); drive = Math.pow(drive, 2); break;
+      case 'displacement-dist': drive = Math.min(1, metrics.displacement.dist / 200); break;
+      case 'displacement-x': drive = Math.min(1, Math.abs(metrics.displacement.x) / 100); break;
+      case 'displacement-y': drive = Math.min(1, Math.abs(metrics.displacement.y) / 100); break;
+    }
     
     const targetVolume = config.minVolume + (config.maxVolume - config.minVolume) * drive;
-    const targetPitch = config.minPitch + (config.maxPitch - config.minPitch) * drive; // Simple pitch follow for now
+    const targetPitch = config.minPitch + (config.maxPitch - config.minPitch) * drive;
+    
+    // Spatial Pan
+    const pan = Math.max(-1, Math.min(1, (metrics.displacement.x / (window.innerWidth/2))));
 
-    // 2. Playback Strategy
+    // 3. Update Player State
+    player.updateVolume(targetVolume, pan);
+
     if (config.playbackMode === 'timeline-scrub') {
-       this.handleGranularPlayback(strokeId, buffer, targetVolume, targetPitch, metrics.timelinePos, config.reverb, config.grainSize);
+       player.scrub(metrics.timelinePos, targetPitch, config.grainSize);
     } else {
-       this.handleLoopPlayback(strokeId, buffer, targetVolume, targetPitch, config.reverb);
+       player.startLoop(targetPitch);
     }
   }
 
-  private handleLoopPlayback(id: string, buffer: AudioBuffer, volume: number, pitch: number, reverb: number) {
-    let active = this.activeLoops.get(id);
-
-    if (!active) {
-       if (volume <= 0.001) return; // Don't start silent loops
-
-       const source = this.audioContext!.createBufferSource();
-       source.buffer = buffer;
-       source.loop = true;
-       
-       const gain = this.audioContext!.createGain();
-       const analyser = this.audioContext!.createAnalyser();
-       analyser.fftSize = 64;
-
-       source.connect(gain);
-       gain.connect(analyser);
-       gain.connect(this.masterGain!);
-       
-       if (this.reverbNode && reverb > 0) {
-          const reverbGain = this.audioContext!.createGain();
-          reverbGain.gain.value = reverb;
-          gain.connect(reverbGain);
-          reverbGain.connect(this.reverbNode);
-       }
-
-       source.start();
-       active = { source, gain, analyser };
-       this.activeLoops.set(id, active);
-    }
-
-    // Update
-    if (active) {
-       const safeVolume = Number.isFinite(volume) ? Math.max(0, volume) : 0;
-       const safePitch = Number.isFinite(pitch) ? Math.max(0.01, pitch) : 1;
-       
-       active.gain.gain.setTargetAtTime(safeVolume, this.audioContext!.currentTime, 0.1);
-       active.source.playbackRate.setTargetAtTime(safePitch, this.audioContext!.currentTime, 0.1);
-    }
+  removeStroke(strokeId: string) {
+      const player = this.players.get(strokeId);
+      if (player) {
+          player.destroy();
+          this.players.delete(strokeId);
+      }
   }
 
-  private handleGranularPlayback(id: string, buffer: AudioBuffer, volume: number, pitch: number, position: number, reverb: number, grainSize: number) {
-    if (this.activeLoops.has(id)) {
-      this.activeLoops.get(id)?.source.stop();
-      this.activeLoops.delete(id);
-    }
-
-    if (volume < 0.01) return;
-
-    const now = this.audioContext!.currentTime;
-    const lastTime = this.lastGrainTime.get(id) || 0;
-    const safeGrainSize = Number.isFinite(grainSize) && grainSize > 0.01 ? grainSize : 0.1;
-    const interval = safeGrainSize * 0.5; // 50% overlap
-
-    if (now - lastTime > interval) {
-       this.playGrain(buffer, volume, pitch, position, reverb, safeGrainSize);
-       this.lastGrainTime.set(id, now);
-    }
-  }
-
-  private playGrain(buffer: AudioBuffer, volume: number, pitch: number, position: number, reverb: number, duration: number) {
-    if (!this.audioContext) return;
-    
-    if (!Number.isFinite(volume) || !Number.isFinite(pitch) || !Number.isFinite(duration) || duration <= 0) return;
-
-    const source = this.audioContext.createBufferSource();
-    source.buffer = buffer;
-    
-    const safePosition = Number.isFinite(position) ? Math.max(0, Math.min(1, position)) : 0;
-    const offset = safePosition * buffer.duration;
-    
-    const gain = this.audioContext.createGain();
-    const safeVolume = Math.max(0, volume);
-    
-    const now = this.audioContext.currentTime;
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(safeVolume, now + duration * 0.1);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-    source.playbackRate.value = Math.max(0.01, pitch);
-    
-    source.connect(gain);
-    gain.connect(this.masterGain!);
-
-    if (this.reverbNode && reverb > 0) {
-      const reverbGain = this.audioContext.createGain();
-      reverbGain.gain.value = reverb;
-      gain.connect(reverbGain);
-      reverbGain.connect(this.reverbNode);
-    }
-
-    source.start(now, offset, duration);
-    source.stop(now + duration + 0.1);
+  stopAll() {
+    this.players.forEach(p => p.destroy());
+    this.players.clear();
   }
 
   // --- ANALYSIS ---
-  
-  // Legacy support for single values, derived from full spectral data
-  getGlobalAudioData(): { average: number, low: number, mid: number, high: number } {
-     const spectral = this.getSpectralData();
-     return {
-         average: spectral.average * 255,
-         low: (spectral.sub + spectral.bass) * 0.5 * 255,
-         mid: (spectral.lowMid + spectral.mid) * 0.5 * 255,
-         high: (spectral.highMid + spectral.treble) * 0.5 * 255
-     };
+
+  getStrokeAmplitude(strokeId: string): number {
+      const player = this.players.get(strokeId);
+      return player ? player.getAmplitude() : 0;
   }
 
   getSpectralData(): AudioSpectralData {
-    if (!this.globalAnalyser || !this.audioContext) return this.lastSpectralData;
-    
-    // FRAME LIMITER: Prevent double-calculation of smoothing if called multiple times per frame
+    // Frame Limiter
     const now = performance.now();
-    if (now - this.lastAnalysisTime < 16) { // ~60fps cap
-        return this.lastSpectralData;
-    }
+    if (now - this.lastAnalysisTime < 16) return this.lastSpectralData;
     this.lastAnalysisTime = now;
+
+    if (!this.globalAnalyser) return this.lastSpectralData;
 
     const bufferLength = this.globalAnalyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     this.globalAnalyser.getByteFrequencyData(dataArray);
 
-    const sampleRate = this.audioContext.sampleRate;
+    const sampleRate = this.audioContext?.sampleRate || 44100;
     const nyquist = sampleRate / 2;
-    // Helper to get average energy in a frequency range (Hz)
+    
     const getEnergy = (minHz: number, maxHz: number) => {
         const startBin = Math.floor((minHz / nyquist) * bufferLength);
         const endBin = Math.floor((maxHz / nyquist) * bufferLength);
@@ -347,17 +407,9 @@ export class AudioManager {
             sum += dataArray[i];
             count++;
         }
-        const avg = count > 0 ? sum / count : 0;
-        return avg / 255; // Normalize 0-1
+        return count > 0 ? (sum / count) / 255 : 0;
     };
 
-    // Calculate raw values for each band
-    // Sub: 20-60 Hz
-    // Bass: 60-250 Hz
-    // LowMid: 250-500 Hz
-    // Mid: 500-2000 Hz
-    // HighMid: 2000-4000 Hz
-    // Treble: 4000 Hz+
     const raw: AudioSpectralData = {
         sub: getEnergy(20, 60),
         bass: getEnergy(60, 250),
@@ -369,72 +421,15 @@ export class AudioManager {
     };
     raw.average = (raw.sub + raw.bass + raw.lowMid + raw.mid + raw.highMid + raw.treble) / 6;
 
-    // Apply Noise Floor (Gate)
     Object.keys(raw).forEach(key => {
         const k = key as keyof AudioSpectralData;
         if (raw[k] < this.noiseFloor) raw[k] = 0;
-        else raw[k] = (raw[k] - this.noiseFloor) / (1 - this.noiseFloor); // Rescale remaining range
+        else raw[k] = (raw[k] - this.noiseFloor) / (1 - this.noiseFloor);
+        raw[k] = this.lastSpectralData[k] * this.smoothing + raw[k] * (1 - this.smoothing);
     });
 
-    // Apply Smoothing
-    const smooth = this.smoothing;
-    const result: AudioSpectralData = {
-        sub: this.lastSpectralData.sub * smooth + raw.sub * (1 - smooth),
-        bass: this.lastSpectralData.bass * smooth + raw.bass * (1 - smooth),
-        lowMid: this.lastSpectralData.lowMid * smooth + raw.lowMid * (1 - smooth),
-        mid: this.lastSpectralData.mid * smooth + raw.mid * (1 - smooth),
-        highMid: this.lastSpectralData.highMid * smooth + raw.highMid * (1 - smooth),
-        treble: this.lastSpectralData.treble * smooth + raw.treble * (1 - smooth),
-        average: this.lastSpectralData.average * smooth + raw.average * (1 - smooth),
-    };
-
-    this.lastSpectralData = result;
-    return result;
-  }
-  
-  // For visualizer drawing directly from data array
-  getRawFrequencyData(): Uint8Array | null {
-      if (!this.globalAnalyser) return null;
-      const bufferLength = this.globalAnalyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-      this.globalAnalyser.getByteFrequencyData(dataArray);
-      return dataArray;
-  }
-
-  getStrokeAmplitude(strokeId: string): number {
-    const active = this.activeLoops.get(strokeId);
-    if (!active) return 0; 
-    const data = this.analyzeNode(active.analyser);
-    return data.average / 255;
-  }
-
-  private analyzeNode(analyser: AnalyserNode) {
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    analyser.getByteFrequencyData(dataArray);
-
-    let sum = 0;
-    let lowSum = 0;
-    const lowBound = Math.floor(dataArray.length * 0.2);
-
-    for (let i = 0; i < dataArray.length; i++) {
-      const val = dataArray[i];
-      sum += val;
-      if (i < lowBound) lowSum += val;
-    }
-
-    return {
-      average: sum / dataArray.length,
-      low: lowSum / lowBound || 0,
-      mid: 0,
-      high: 0
-    };
-  }
-
-  stopAll() {
-    this.activeLoops.forEach(s => s.source.stop());
-    this.activeLoops.clear();
-    this.lastGrainTime.clear();
+    this.lastSpectralData = raw;
+    return raw;
   }
 }
 

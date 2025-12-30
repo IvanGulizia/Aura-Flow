@@ -508,7 +508,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       case 'audio-high-mid': t = spectral.highMid * sensitivity; break;
       case 'audio-treble': t = spectral.treble * sensitivity; break;
       
-      case 'audio-sample': t = audioManager.getStrokeAmplitude(stroke.id); break;
+      // FIX: Apply sensitivity to the sample amplitude as well, otherwise it's too quiet
+      case 'audio-sample': t = audioManager.getStrokeAmplitude(stroke.id) * sensitivity; break;
     }
     const inMin = config.inputMin ?? 0; const inMax = config.inputMax ?? (source === 'cursor' ? 500 : 1); 
     if (inMax > inMin) t = (t - inMin) / (inMax - inMin); 
@@ -650,10 +651,23 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       const centerDist = hasPointer ? Math.hypot(pointerX - stroke.center.x, pointerY - stroke.center.y) : 10000; 
       
       const swarmF = swarmForces.get(stroke.id) || { vx: 0, vy: 0 }; 
-      if (P.isSoundEngineEnabled && stroke.sound.bufferId && stroke.sound.enabled) { 
+      
+      // Ensure stroke sound is updated even if engine is 'disabled' visually, 
+      // but only if the stroke actually has a buffer to play/analyze
+      if (stroke.sound.bufferId && stroke.sound.enabled) { 
           const ox = stroke.originCenter?.x ?? stroke.center.x; 
           const oy = stroke.originCenter?.y ?? stroke.center.y; 
-          audioManager.updateStrokeSound(stroke.id, stroke.sound.bufferId, { ...stroke.sound, reverb: stroke.sound.reverbSend }, { cursorDist: centerDist, physicsSpeed: (totalSpeed / len) * 20, displacement: { dist: Math.hypot(stroke.center.x - ox, stroke.center.y - oy), x: stroke.center.x - ox, y: stroke.center.y - oy }, timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0 }); 
+          audioManager.updateStrokeSound(
+              stroke.id, 
+              stroke.sound.bufferId, 
+              { ...stroke.sound, reverbSend: stroke.sound.reverbSend }, // Explicitly map reverbSend
+              { 
+                  cursorDist: centerDist, 
+                  physicsSpeed: (totalSpeed / len) * 20, 
+                  displacement: { dist: Math.hypot(stroke.center.x - ox, stroke.center.y - oy), x: stroke.center.x - ox, y: stroke.center.y - oy }, 
+                  timelinePos: (stroke.sound.playbackMode === 'timeline-scrub' && hasPointer) ? getProjectedPosition(stroke, pointerX, pointerY) : 0 
+              }
+          ); 
       }
       
       for (let j = 0; j < stroke.points.length; j++) { 
@@ -894,7 +908,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             const bounds = getStrokeBounds(stroke); const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180; const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
             const gx1 = bounds.cx - Math.cos(angleRad) * r; const gy1 = bounds.cy - Math.sin(angleRad) * r; const gx2 = bounds.cx + Math.cos(angleRad) * r; const gy2 = bounds.cy + Math.sin(angleRad) * r;
             let strokeStyle: string | CanvasGradient = params.color;
-            if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { let shift = params.hueShift; if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180; strokeStyle = getShiftedColor(strokeStyle as string, shift); }
+            if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { let shift = params.hueShift; if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getSpectralData().mid) * 180; strokeStyle = getShiftedColor(strokeStyle as string, shift); }
             if (params.gradient.enabled) {
                 const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2); const midpoint = params.strokeGradientMidpoint ?? 0.5;
                 params.gradient.colors.forEach((c, i) => { const t = i / (params.gradient.colors.length - 1); const offset = warpOffset(t, midpoint); grad.addColorStop(offset, c); });
@@ -943,7 +957,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
                          if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
-                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
+                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getSpectralData().mid) * 180;
                          c = getShiftedColor(c, shift);
                     }
                     if (params.glowStrength > 0) { ctx.shadowColor = c; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
@@ -984,7 +998,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                             if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { 
                                 let shift = params.hueShift; 
                                 if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i); 
-                                if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180; 
+                                if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getSpectralData().mid) * 180; 
                                 cArc = getShiftedColor(cArc, shift); 
                             }
                             if (params.glowStrength > 0) { ctx.shadowColor = cArc; ctx.shadowBlur = params.glowStrength; } else { ctx.shadowBlur = 0; }
@@ -1004,7 +1018,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
                          if (isModActive(params.modulations?.hueShift)) shift = resolveParam(shift, 'hueShift', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
-                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getGlobalAudioData().mid / 255) * 180;
+                         if (params.audioToColor && P.isMicEnabled) shift += (audioManager.getSpectralData().mid) * 180;
                          c = getShiftedColor(c, shift);
                     }
                     ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.1, width); ctx.globalAlpha = opacity;
