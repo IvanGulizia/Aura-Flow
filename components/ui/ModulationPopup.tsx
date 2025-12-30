@@ -34,8 +34,17 @@ const ModulationMonitor = ({ source }: { source: ModulationSource }) => {
     useEffect(() => {
         let req: number;
         const update = () => {
-            if (source === 'audio-live') {
-                setLevel(audioManager.getGlobalAudioData().average / 255);
+            if (source.startsWith('audio-')) {
+                const spectral = audioManager.getSpectralData();
+                let val = 0;
+                if (source === 'audio-sub') val = spectral.sub;
+                else if (source === 'audio-bass') val = spectral.bass;
+                else if (source === 'audio-low-mid') val = spectral.lowMid;
+                else if (source === 'audio-mid') val = spectral.mid;
+                else if (source === 'audio-high-mid') val = spectral.highMid;
+                else if (source === 'audio-treble') val = spectral.treble;
+                else val = spectral.average; // audio-live / average
+                setLevel(val);
             }
             req = requestAnimationFrame(update);
         };
@@ -52,7 +61,7 @@ const ModulationMonitor = ({ source }: { source: ModulationSource }) => {
             <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
                 <div 
                     className="absolute inset-y-0 left-0 transition-all duration-75 bg-indigo-500"
-                    style={{ width: `${level * 100}%` }}
+                    style={{ width: `${Math.min(100, level * 100)}%` }}
                 />
             </div>
             <span className="text-[8px] font-mono text-slate-400 w-6 text-right">{Math.round(level * 100)}%</span>
@@ -103,7 +112,7 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
 
   const isTimeBased = source.startsWith('time');
   const isCursor = source === 'cursor';
-  const isAudioLive = source === 'audio-live';
+  const isAudioLive = source.startsWith('audio-') && source !== 'audio-sample';
 
   return (
     <div className="mt-2 p-3 bg-slate-50/90 rounded-xl border border-slate-200 text-[10px] animate-fade-in-up z-20 relative shadow-sm">
@@ -134,9 +143,17 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
                 <option value="pressure">Pressure</option>
                 <option value="cursor">Cursor Distance</option>
               </optgroup>
-              <optgroup label="Audio">
-                <option value="audio-live">Microphone (Live)</option>
-                <option value="audio-sample">Stroke Audio Buffer</option>
+              <optgroup label="Sound">
+                 <option value="audio-sample">Stroke Audio Buffer</option>
+              </optgroup>
+              <optgroup label="Audio Reactivity (Live)">
+                <option value="audio-sub">Sub Bass (20-60Hz)</option>
+                <option value="audio-bass">Bass (60-250Hz)</option>
+                <option value="audio-low-mid">Low Mid (250-500Hz)</option>
+                <option value="audio-mid">Mid (500-2k Hz)</option>
+                <option value="audio-high-mid">High Mid (2k-4k Hz)</option>
+                <option value="audio-treble">Treble (4k+ Hz)</option>
+                <option value="audio-average">Average Level</option>
               </optgroup>
             </select>
           </div>

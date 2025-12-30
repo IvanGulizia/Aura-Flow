@@ -1,4 +1,14 @@
 
+export interface AudioSpectralData {
+  average: number;
+  sub: number;      // 20-60 Hz
+  bass: number;     // 60-250 Hz
+  lowMid: number;   // 250-500 Hz
+  mid: number;      // 500-2000 Hz
+  highMid: number;  // 2000-4000 Hz
+  treble: number;   // 4000 Hz+
+}
+
 export class AudioManager {
   private audioContext: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -9,6 +19,15 @@ export class AudioManager {
   private globalSource: MediaStreamAudioSourceNode | null = null;
   private micStream: MediaStream | null = null;
   
+  // Analysis Config
+  public smoothing: number = 0.8;
+  public noiseFloor: number = 0.1; // Threshold below which signal is ignored (0-1)
+  
+  private lastSpectralData: AudioSpectralData = {
+      average: 0, sub: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0
+  };
+  private lastAnalysisTime: number = 0; // NEW: Frame limiter
+
   // Stroke specific audio
   private buffers: Map<string, AudioBuffer> = new Map(); // bufferId -> AudioBuffer
   
@@ -16,7 +35,6 @@ export class AudioManager {
   private activeLoops: Map<string, { source: AudioBufferSourceNode, gain: GainNode, analyser: AnalyserNode }> = new Map(); 
   
   // Granular State (for Timeline mode)
-  // We don't keep persistent sources, we schedule grains
   private lastGrainTime: Map<string, number> = new Map();
 
   public isEngineReady: boolean = false;
@@ -41,7 +59,6 @@ export class AudioManager {
     for (let channel = 0; channel < 2; channel++) {
        const channelData = impulse.getChannelData(channel);
        for (let i = 0; i < length; i++) {
-          // Exponential decay noise
           channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 4);
        }
     }
@@ -61,7 +78,8 @@ export class AudioManager {
          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
          this.micStream = stream;
          this.globalAnalyser = this.audioContext.createAnalyser();
-         this.globalAnalyser.fftSize = 256;
+         this.globalAnalyser.fftSize = 2048; // Higher resolution for better bass detection
+         this.globalAnalyser.smoothingTimeConstant = 0; // We handle smoothing manually for more control
          this.globalSource = this.audioContext.createMediaStreamSource(stream);
          this.globalSource.connect(this.globalAnalyser);
          this.isMicActive = true;
@@ -197,9 +215,6 @@ export class AudioManager {
   }
 
   private handleLoopPlayback(id: string, buffer: AudioBuffer, volume: number, pitch: number, reverb: number) {
-    // If we were doing granular before, we don't have a loop.
-    // If loop exists, update it. If not, create it.
-    
     let active = this.activeLoops.get(id);
 
     if (!active) {
@@ -240,7 +255,6 @@ export class AudioManager {
   }
 
   private handleGranularPlayback(id: string, buffer: AudioBuffer, volume: number, pitch: number, position: number, reverb: number, grainSize: number) {
-    // Kill loop if it exists (switching modes)
     if (this.activeLoops.has(id)) {
       this.activeLoops.get(id)?.source.stop();
       this.activeLoops.delete(id);
@@ -262,20 +276,17 @@ export class AudioManager {
   private playGrain(buffer: AudioBuffer, volume: number, pitch: number, position: number, reverb: number, duration: number) {
     if (!this.audioContext) return;
     
-    // Sanitize inputs to prevent AudioParam errors (AudioParam.linearRampToValueAtTime: Argument 1 is not a finite floating-point value)
     if (!Number.isFinite(volume) || !Number.isFinite(pitch) || !Number.isFinite(duration) || duration <= 0) return;
 
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     
-    // Calculate offset in seconds based on timeline position (0-1)
     const safePosition = Number.isFinite(position) ? Math.max(0, Math.min(1, position)) : 0;
     const offset = safePosition * buffer.duration;
     
     const gain = this.audioContext.createGain();
     const safeVolume = Math.max(0, volume);
     
-    // Envelope for grain to prevent clicks
     const now = this.audioContext.currentTime;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(safeVolume, now + duration * 0.1);
@@ -298,14 +309,101 @@ export class AudioManager {
   }
 
   // --- ANALYSIS ---
+  
+  // Legacy support for single values, derived from full spectral data
   getGlobalAudioData(): { average: number, low: number, mid: number, high: number } {
-    if (!this.globalAnalyser) return { average: 0, low: 0, mid: 0, high: 0 };
-    return this.analyzeNode(this.globalAnalyser);
+     const spectral = this.getSpectralData();
+     return {
+         average: spectral.average * 255,
+         low: (spectral.sub + spectral.bass) * 0.5 * 255,
+         mid: (spectral.lowMid + spectral.mid) * 0.5 * 255,
+         high: (spectral.highMid + spectral.treble) * 0.5 * 255
+     };
+  }
+
+  getSpectralData(): AudioSpectralData {
+    if (!this.globalAnalyser || !this.audioContext) return this.lastSpectralData;
+    
+    // FRAME LIMITER: Prevent double-calculation of smoothing if called multiple times per frame
+    const now = performance.now();
+    if (now - this.lastAnalysisTime < 16) { // ~60fps cap
+        return this.lastSpectralData;
+    }
+    this.lastAnalysisTime = now;
+
+    const bufferLength = this.globalAnalyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    this.globalAnalyser.getByteFrequencyData(dataArray);
+
+    const sampleRate = this.audioContext.sampleRate;
+    const nyquist = sampleRate / 2;
+    // Helper to get average energy in a frequency range (Hz)
+    const getEnergy = (minHz: number, maxHz: number) => {
+        const startBin = Math.floor((minHz / nyquist) * bufferLength);
+        const endBin = Math.floor((maxHz / nyquist) * bufferLength);
+        let sum = 0;
+        let count = 0;
+        for (let i = startBin; i <= endBin; i++) {
+            sum += dataArray[i];
+            count++;
+        }
+        const avg = count > 0 ? sum / count : 0;
+        return avg / 255; // Normalize 0-1
+    };
+
+    // Calculate raw values for each band
+    // Sub: 20-60 Hz
+    // Bass: 60-250 Hz
+    // LowMid: 250-500 Hz
+    // Mid: 500-2000 Hz
+    // HighMid: 2000-4000 Hz
+    // Treble: 4000 Hz+
+    const raw: AudioSpectralData = {
+        sub: getEnergy(20, 60),
+        bass: getEnergy(60, 250),
+        lowMid: getEnergy(250, 500),
+        mid: getEnergy(500, 2000),
+        highMid: getEnergy(2000, 4000),
+        treble: getEnergy(4000, 16000),
+        average: 0
+    };
+    raw.average = (raw.sub + raw.bass + raw.lowMid + raw.mid + raw.highMid + raw.treble) / 6;
+
+    // Apply Noise Floor (Gate)
+    Object.keys(raw).forEach(key => {
+        const k = key as keyof AudioSpectralData;
+        if (raw[k] < this.noiseFloor) raw[k] = 0;
+        else raw[k] = (raw[k] - this.noiseFloor) / (1 - this.noiseFloor); // Rescale remaining range
+    });
+
+    // Apply Smoothing
+    const smooth = this.smoothing;
+    const result: AudioSpectralData = {
+        sub: this.lastSpectralData.sub * smooth + raw.sub * (1 - smooth),
+        bass: this.lastSpectralData.bass * smooth + raw.bass * (1 - smooth),
+        lowMid: this.lastSpectralData.lowMid * smooth + raw.lowMid * (1 - smooth),
+        mid: this.lastSpectralData.mid * smooth + raw.mid * (1 - smooth),
+        highMid: this.lastSpectralData.highMid * smooth + raw.highMid * (1 - smooth),
+        treble: this.lastSpectralData.treble * smooth + raw.treble * (1 - smooth),
+        average: this.lastSpectralData.average * smooth + raw.average * (1 - smooth),
+    };
+
+    this.lastSpectralData = result;
+    return result;
+  }
+  
+  // For visualizer drawing directly from data array
+  getRawFrequencyData(): Uint8Array | null {
+      if (!this.globalAnalyser) return null;
+      const bufferLength = this.globalAnalyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      this.globalAnalyser.getByteFrequencyData(dataArray);
+      return dataArray;
   }
 
   getStrokeAmplitude(strokeId: string): number {
     const active = this.activeLoops.get(strokeId);
-    if (!active) return 0; // Granular doesn't support visual feedback yet for performance
+    if (!active) return 0; 
     const data = this.analyzeNode(active.analyser);
     return data.average / 255;
   }

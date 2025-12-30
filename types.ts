@@ -27,7 +27,14 @@ export type ModulationSource =
   | 'path' 
   | 'path-mirror' 
   | 'path-mirror-inv' 
-  | 'audio-live' 
+  | 'audio-live' // Legacy generic
+  | 'audio-average' // NEW: Average level
+  | 'audio-sub'      // NEW: 20-60Hz
+  | 'audio-bass'     // NEW: 60-250Hz
+  | 'audio-low-mid'  // NEW: 250-500Hz
+  | 'audio-mid'      // NEW: 500-2000Hz
+  | 'audio-high-mid' // NEW: 2000-4000Hz
+  | 'audio-treble'   // NEW: 4000Hz+
   | 'audio-sample';
 
 export type EasingMode = 

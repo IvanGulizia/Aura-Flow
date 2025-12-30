@@ -470,6 +470,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   };
   const resolveParam = (baseValue: number, key: keyof SimulationParams, stroke: Stroke, pointPressure: number, pointerX: number, pointerY: number, progress: number, pointIndex: number): number => {
     const config = stroke.params.modulations?.[key]; if (!config) return baseValue; const { source, min, max, easing, scope } = config; if (source === 'none') return baseValue; let t = 0; const isScopePoint = scope === 'point';
+    
+    // NEW AUDIO LOGIC: Use the detailed spectrum data if available
+    const spectral = audioManager.getSpectralData();
+    const sensitivity = stroke.params.audioSensitivity ?? 1.0; 
+
     switch (source) {
       case 'random': t = isScopePoint ? getPseudoRandom(stroke.randomSeed + pointIndex * 0.1, key as string) : getPseudoRandom(stroke.randomSeed, key as string); break;
       case 'index': t = (stroke.index % 10) / 10; break;
@@ -490,7 +495,19 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       case 'path': t = progress; break;
       case 'path-mirror': t = 1 - Math.abs((progress - 0.5) * 2); break;
       case 'path-mirror-inv': t = Math.abs((progress - 0.5) * 2); break;
-      case 'audio-live': t = audioManager.getGlobalAudioData().average / 255; break;
+      
+      // Legacy Generic Audio
+      case 'audio-live': t = spectral.average * sensitivity; break;
+      case 'audio-average': t = spectral.average * sensitivity; break;
+
+      // New Granular Bands (Now scaled by global sensitivity!)
+      case 'audio-sub': t = spectral.sub * sensitivity; break;
+      case 'audio-bass': t = spectral.bass * sensitivity; break;
+      case 'audio-low-mid': t = spectral.lowMid * sensitivity; break;
+      case 'audio-mid': t = spectral.mid * sensitivity; break;
+      case 'audio-high-mid': t = spectral.highMid * sensitivity; break;
+      case 'audio-treble': t = spectral.treble * sensitivity; break;
+      
       case 'audio-sample': t = audioManager.getStrokeAmplitude(stroke.id); break;
     }
     const inMin = config.inputMin ?? 0; const inMax = config.inputMax ?? (source === 'cursor' ? 500 : 1); 
@@ -502,8 +519,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     if (!latestProps.current.isPlaying) return;
     const P = latestProps.current;
     timeRef.current += 0.01;
-    const globalAudio = P.isMicEnabled ? audioManager.getGlobalAudioData() : { average: 0, low: 0 };
-    const globalBass = globalAudio.low / 255;
+    
+    // NEW: Get full spectral data
+    const spectral = P.isMicEnabled ? audioManager.getSpectralData() : { average: 0, sub: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0 };
+    
+    // Legacy mapping for old flags
+    const globalBass = spectral.bass + spectral.sub * 0.5; // Combo of sub and bass for wiggle
+    
     const pointerX = pointerRef.current.x; const pointerY = pointerRef.current.y;
     const hasPointer = pointerRef.current.x > -100;
     pointerRef.current.lastX = pointerX; pointerRef.current.lastY = pointerY;
@@ -756,7 +778,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         const maxTangent = Math.min(limit1, limit2);
         const ratio = Math.max(0, Math.min(2, rawRounding)) / 2; 
         const tangentLen = maxTangent * ratio;
-        if (tangentLen < 0.1) return null;
+        if (tangentLen < 0.1) return null; 
         const u1x = dx1 / len1, u1y = dy1 / len1; 
         const u2x = dx2 / len2, u2y = dy2 / len2; 
         const dot = u1x * u2x + u1y * u2y;
