@@ -439,20 +439,24 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       const symPoints = getSymmetryPoints(x, y);
       activeStrokesRef.current.forEach((stroke, idx) => {
         if (idx >= symPoints.length) return;
-        const target = symPoints[idx]; const lastP = stroke.points[stroke.points.length - 1]; const isStart = stroke.points.length < 2;
+        const target = symPoints[idx]; const lastP = stroke.points[stroke.points.length - 1]; 
+        
         const dx = target.x - lastP.x;
         const dy = target.y - lastP.y;
         const distSq = dx*dx + dy*dy;
         const dist = Math.sqrt(distSq);
+        
+        // Strict minimal distance check to prevent zero-length segments and grid explosions
+        if (dist < 0.5) return;
+
         let seg = Math.max(1, stroke.params.segmentation);
         if (P.gridConfig.enabled && P.gridConfig.snap) {
             const gridSize = Math.max(10, P.gridConfig.size);
             const snapFactor = P.gridConfig.snapFactor || 1;
             seg = gridSize * snapFactor;
         }
-        if (isStart) {
-             stroke.points.push({ x: target.x, y: target.y, baseX: target.x, baseY: target.y, vx: 0, vy: 0, pressure });
-        } else if (dist >= seg) {
+        
+        if (dist >= seg) {
              const steps = Math.max(1, Math.floor(dist / seg));
              for (let i = 1; i <= steps; i++) {
                  const t = i / steps;
@@ -461,7 +465,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                  const nPressure = lastP.pressure + (pressure - lastP.pressure) * t;
                  stroke.points.push({ x: nx, y: ny, baseX: nx, baseY: ny, vx: 0, vy: 0, pressure: nPressure });
              }
-        } else { return; }
+        }
+        
         let cx = 0, cy = 0; stroke.points.forEach(p => { cx += p.x; cy += p.y; }); 
         stroke.center.x = cx / stroke.points.length; stroke.center.y = cy / stroke.points.length; 
         if (!stroke.originCenter.x) stroke.originCenter = { ...stroke.center }; 
@@ -712,7 +717,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
 
           const dx = pointerX - p.x; const dy = pointerY - p.y;
           const pDist = Math.hypot(dx, dy);
-          if (hasPointer && pDist < currentMouseRadius) { 
+          if (hasPointer && pDist < currentMouseRadius && pDist > 0.1) { // SAFETY: check pDist > 0.1
               const force = Math.pow(1 - (pDist / currentMouseRadius), mouseFall); 
               if (mouseRep > 0) { p.vx -= (dx / pDist) * force * mouseRep; p.vy -= (dy / pDist) * force * mouseRep; } 
               if (mouseAttr > 0) { p.vx += (dx / pDist) * force * mouseAttr; p.vy += (dy / pDist) * force * mouseAttr; } 
@@ -867,7 +872,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         const sx = selectionBoxRef.current.startX; const sy = selectionBoxRef.current.startY; const w = selectionBoxRef.current.currentX - sx; const h = selectionBoxRef.current.currentY - sy;
         ctx.save(); ctx.fillStyle = 'rgba(79, 70, 229, 0.1)'; ctx.strokeStyle = 'rgba(79, 70, 229, 0.5)'; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.fillRect(sx, sy, w, h); ctx.strokeRect(sx, sy, w, h); ctx.restore();
     }
-    const strokesToDraw = [...strokesRef.current, ...activeStrokesRef.current];
+    
+    // FIX: Merge strokes properly to avoid double rendering of active strokes
+    const strokesToDraw = [...strokesRef.current];
+    activeStrokesRef.current.forEach(s => {
+        if (!strokesRef.current.includes(s)) strokesToDraw.push(s);
+    });
+
     if (!P.isPlaying) {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalCompositeOperation = 'source-over';
         strokesToDraw.forEach(stroke => {
