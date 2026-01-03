@@ -484,7 +484,34 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       case 'random': t = isScopePoint ? getPseudoRandom(stroke.randomSeed + pointIndex * 0.1, key as string) : getPseudoRandom(stroke.randomSeed, key as string); break;
       case 'index': t = (stroke.index % 10) / 10; break;
       case 'selection-index': t = (stroke.selectionTotal ?? 1) > 1 ? (stroke.selectionIndex ?? 0) / ((stroke.selectionTotal ?? 1) - 1) : 0; break;
-      case 'time': case 'time-pulse': case 'time-step': const dir = config.invertDirection ? -1 : 1; const speedVal = config.speed ?? 1; let timeFactor = timeRef.current * speedVal; if (config.speedStrategy === 'duration' && speedVal > 0) timeFactor = timeRef.current / speedVal; const phaseOffset = isScopePoint ? (config.speedStrategy === 'duration' ? progress : pointIndex * 0.05) : 0; if (source === 'time') { t = (timeFactor * dir + phaseOffset) % 1; if (t < 0) t += 1; } else if (source === 'time-pulse') { const duty = config.paramA ?? 0.5; const edge = Math.min(0.2, config.paramB ?? 0.1); const cycleLen = 1 + (config.paramC ?? 0); const rawPulse = (timeFactor * dir + phaseOffset) % cycleLen; let normPulse = rawPulse < 0 ? rawPulse + cycleLen : rawPulse; if (normPulse > 1) t = 0; else if (normPulse < edge) t = normPulse / edge; else if (normPulse < duty) t = 1; else if (normPulse < duty + edge) t = 1 - (normPulse - duty) / edge; else t = 0; } else if (source === 'time-step') { const steps = 4; let rawStep = (timeFactor * dir + phaseOffset) % 1; if (rawStep < 0) rawStep += 1; t = Math.floor(rawStep * steps) / (steps - 1); } break;
+      case 'time': case 'time-pulse': case 'time-step': 
+        const dir = config.invertDirection ? -1 : 1; 
+        const speedVal = config.speed ?? 1; 
+        let timeFactor = timeRef.current * speedVal; 
+        if (config.speedStrategy === 'duration' && speedVal > 0) timeFactor = timeRef.current / speedVal; 
+        const phaseOffset = isScopePoint ? (config.speedStrategy === 'duration' ? progress : pointIndex * 0.05) : 0; 
+        
+        if (source === 'time') { 
+            t = (timeFactor * dir + phaseOffset) % 1; 
+            if (t < 0) t += 1; 
+        } else if (source === 'time-pulse') { 
+            const duty = config.paramA ?? 0.5; 
+            const edge = Math.min(0.2, config.paramB ?? 0.1); 
+            const cycleLen = 1 + (config.paramC ?? 0); 
+            const rawPulse = (timeFactor * dir + phaseOffset) % cycleLen; 
+            let normPulse = rawPulse < 0 ? rawPulse + cycleLen : rawPulse; 
+            if (normPulse > 1) t = 0; 
+            else if (normPulse < edge) t = normPulse / edge; 
+            else if (normPulse < duty) t = 1; 
+            else if (normPulse < duty + edge) t = 1 - (normPulse - duty) / edge; 
+            else t = 0; 
+        } else if (source === 'time-step') { 
+            const steps = config.paramA ? Math.floor(config.paramA * 10) + 2 : 4;
+            let rawStep = (timeFactor * dir + phaseOffset) % 1; 
+            if (rawStep < 0) rawStep += 1; 
+            t = Math.floor(rawStep * steps) / (steps - 1); 
+        } 
+        break;
       case 'velocity': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
       case 'pressure': t = isScopePoint ? pointPressure : stroke.points.reduce((acc, p) => acc + p.pressure, 0) / (stroke.points.length || 1); break;
       case 'cursor': 
@@ -946,7 +973,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                 if (d > 0.1) points.push(curr);
             }
             const len = points.length;
-            const roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0));
+            let roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0));
+            
+            // FORCE SHARP IF MODULATION ACTIVE AND OPTION ENABLED
+            const isVisualModActive = isModActive(params.modulations?.strokeWidth) || isModActive(params.modulations?.opacity) || isModActive(params.modulations?.hueShift);
+            if (params.disableRoundingOnMod && isVisualModActive) {
+                roundingRatio = 0;
+            }
+
             let currentX = points[0].x;
             let currentY = points[0].y;
             if (points.length > 1) {

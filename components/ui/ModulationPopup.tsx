@@ -183,6 +183,46 @@ export const ModulationPopup: React.FC<ModulationPopupProps> = ({ config, onChan
                  </div>
               </div>
 
+              {isTimeBased && (
+                  <div className="bg-amber-50/50 p-2 rounded-lg border border-amber-100 flex flex-col gap-2 animate-fade-in-up">
+                      <div className="flex items-center justify-between">
+                          <span className="text-[8px] font-bold text-amber-500 uppercase tracking-widest flex items-center gap-1">
+                              <Clock size={10} /> Time Settings
+                          </span>
+                      </div>
+                      <MiniSlider
+                          label="Speed"
+                          value={speed}
+                          min={0} max={5} step={0.1}
+                          onChange={(v: number) => updateConfig({ speed: v })}
+                      />
+                      {source === 'time-pulse' && (
+                          <>
+                              <MiniSlider
+                                  label="Duty Cycle"
+                                  value={config?.paramA ?? 0.5}
+                                  min={0.1} max={0.9} step={0.05}
+                                  onChange={(v: number) => updateConfig({ paramA: v })}
+                              />
+                              <MiniSlider
+                                  label="Edge Smoothness"
+                                  value={config?.paramB ?? 0.1}
+                                  min={0} max={0.5} step={0.01}
+                                  onChange={(v: number) => updateConfig({ paramB: v })}
+                              />
+                          </>
+                      )}
+                      {source === 'time-step' && (
+                           <MiniSlider
+                                  label="Steps"
+                                  value={config?.paramA ? Math.floor(config.paramA * 10) + 2 : 4}
+                                  min={2} max={12} step={1}
+                                  onChange={(v: number) => updateConfig({ paramA: (v - 2) / 10 })}
+                              />
+                      )}
+                  </div>
+              )}
+
               {isCursor && (
                  <div className="flex flex-col gap-2 bg-indigo-50/50 p-2 rounded-lg border border-indigo-100">
                     <div className="flex items-center gap-2">

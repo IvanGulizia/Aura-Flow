@@ -234,11 +234,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
           </div>
           {(selectedStrokeId || props.selectedConnectionIds.size > 0) && (
             <div className="flex items-center gap-2">
-              <button onClick={() => props.setDeleteSelectedTrigger(t => t + 1)} className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm">
+              <button 
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); props.setDeleteSelectedTrigger(t => t + 1); }} 
+                className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+              >
                 <Trash2 size={14} />
               </button>
               {selectedStrokeId && (
-                  <button onClick={props.onSyncSelected} title="Sync All Selected" className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm">
+                  <button 
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); props.onSyncSelected?.(); }} 
+                    title="Sync All Selected" 
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm"
+                  >
                       <RefreshCcw size={14} />
                   </button>
               )}

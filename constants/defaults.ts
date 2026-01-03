@@ -5,6 +5,7 @@ export const DEFAULT_PARAMS: SimulationParams = {
   strokeWidth: 4, opacity: 1, color: '#574dff', blendMode: 'source-over', lineCap: 'round', glowStrength: 0, blurStrength: 0, seamlessPath: true, pathRounding: 0,
   drawPoints: false,
   smoothModulation: false,
+  disableRoundingOnMod: false,
   closePath: false,
   closePathRadius: 50,
   hueShift: 0,
@@ -73,7 +74,7 @@ export const PARAMS_GROUPS = {
   physics: ['mass', 'friction', 'viscosity', 'elasticity', 'tension', 'maxDisplacement', 'gravityX', 'gravityY'],
   shape: ['segmentation', 'smoothing', 'wiggleAmplitude', 'wiggleFrequency', 'waveSpeed', 'closePath', 'closePathRadius'],
   social: ['neighborRadius', 'repulsionForce', 'attractionForce', 'alignmentForce', 'cohesionForce', 'mouseInfluenceRadius', 'mouseRepulsion', 'mouseAttraction', 'mouseFalloff', 'swarmCursorInfluence', 'autoLinkRadius', 'autoLinkStiffness', 'autoLinkBreakingForce', 'autoLinkBias', 'autoLinkInfluence', 'autoLinkFalloff'],
-  visuals: ['strokeWidth', 'opacity', 'blendMode', 'lineCap', 'glowStrength', 'blurStrength', 'seamlessPath', 'pathRounding', 'drawPoints', 'smoothModulation', 'hueShift', 'fill', 'gradient', 'strokeGradientType'], 
+  visuals: ['strokeWidth', 'opacity', 'blendMode', 'lineCap', 'glowStrength', 'blurStrength', 'seamlessPath', 'pathRounding', 'drawPoints', 'smoothModulation', 'disableRoundingOnMod', 'hueShift', 'fill', 'gradient', 'strokeGradientType'], 
   audio: ['audioSensitivity', 'audioToWidth', 'audioToColor', 'audioToWiggle']
 };
 
@@ -115,6 +116,7 @@ export const PARAM_DESCRIPTIONS: Record<string, string> = {
   audioToWiggle: "If enabled, bass frequencies cause chaotic vibration.",
   drawPoints: "Draw circles at each point of the line. Useful for visualizing structure or creating dot patterns.",
   smoothModulation: "When enabled, properties like color and size are interpolated smoothly between points instead of per segment.",
+  disableRoundingOnMod: "If enabled, Roundness is forced to 0 when Width, Opacity or Hue are modulated. Prevents artifacts and improves performance.",
   closePath: "Automatically connects the last point to the first point if close enough.",
   closePathRadius: "Maximum distance to trigger the automatic closing of the path.",
   lineCap: "Shape of the stroke ends: Round, Butt (flat), or Square.",

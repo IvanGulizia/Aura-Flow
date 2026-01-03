@@ -183,6 +183,7 @@ export interface SimulationParams {
   pathRounding: number; // 0 to 1. Used when seamlessPath is false (e.g. Grid Mode). Now Modulatable.
   drawPoints: boolean; // Explicitly draw points as circles
   smoothModulation: boolean; // NEW: Smooth gradients between segments
+  disableRoundingOnMod: boolean; // NEW: Force roundness to 0 if modulation is active (Performance/Aesthetic)
   
   // --- PATH CLOSING ---
   closePath: boolean; // NEW: Connect last point to first
