@@ -129,6 +129,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
   const shouldShow = (key: keyof SimulationParams | 'fill' | 'gradient' | string, subValue?: any, subDefault?: any) => {
     if (!showModifiedOnly) return true;
+    
+    // UPDATED: Check for active modulation on this key
+    const isModulated = currentParams.modulations?.[key as keyof SimulationParams]?.source !== 'none' && 
+                        currentParams.modulations?.[key as keyof SimulationParams] !== undefined;
+    if (isModulated) return true;
+
     if (subValue !== undefined && subDefault !== undefined) {
          if (typeof subValue === 'number') return Math.abs(subValue - subDefault) > 0.001;
          return subValue !== subDefault;

@@ -384,13 +384,36 @@ export default function App() {
     const keys = PARAMS_GROUPS[section];
     const newValues: any = {};
     keys.forEach(k => { newValues[k] = (DEFAULT_PARAMS as any)[k]; });
+    
+    // UPDATED: Clear modulations for keys in this section
+    const targetParams = (selectedStrokeIds.size > 0 && selectedStrokeParams) ? selectedStrokeParams : brushParams;
+    const newMods = { ...(targetParams.modulations || {}) };
+    let modsModified = false;
+    
+    keys.forEach(k => {
+        if (newMods[k as keyof SimulationParams]) {
+            delete newMods[k as keyof SimulationParams];
+            modsModified = true;
+        }
+    });
+
     if (selectedStrokeIds.size > 0 && selectedStrokeParams) { 
         const updated = { ...selectedStrokeParams }; 
-        for (const k in newValues) { (updated as any)[k] = newValues[k]; } 
+        for (const k in newValues) { (updated as any)[k] = newValues[k]; }
+        if (modsModified) updated.modulations = newMods;
+        
         setSelectedStrokeParams(updated); 
+        
+        // Sync values
         canvasRef.current?.updateSelectedParams(newValues);
+        // Sync cleared modulations if needed
+        if (modsModified) {
+            keys.forEach(k => {
+                 canvasRef.current?.updateSelectedParams({ key: k, value: undefined, modulation: true });
+            });
+        }
     } else {
-        setBrushParams(prev => ({ ...prev, ...newValues }));
+        setBrushParams(prev => ({ ...prev, ...newValues, modulations: modsModified ? newMods : prev.modulations }));
     }
     setActivePresetName(null);
   };

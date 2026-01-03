@@ -32,8 +32,6 @@ export const VisualsSection: React.FC<VisualsSectionProps> = ({
             {shouldShow('seamlessPath') && <Toggle label="Seamless Path" value={currentParams.seamlessPath} onChange={(v) => updateParam('seamlessPath', v)} />}
             {shouldShow('pathRounding') && <Slider label="Roundness" value={currentParams.pathRounding} min={0} max={2} step={0.1} onChange={(v) => updateParam('pathRounding', v)} {...getCommonProps('pathRounding')} description="0 = Sharp, 1 = Classic, 2 = Max Arc" />}
             
-            {shouldShow('disableRoundingOnMod') && <Toggle label="Sharp Modulations" description={PARAM_DESCRIPTIONS['disableRoundingOnMod']} value={currentParams.disableRoundingOnMod || false} onChange={(v) => updateParam('disableRoundingOnMod', v)} />}
-
             {shouldShow('drawPoints') && <Toggle label="Draw Points" description={PARAM_DESCRIPTIONS['drawPoints']} value={currentParams.drawPoints} onChange={(v) => updateParam('drawPoints', v)} />}
             {shouldShow('hueShift') && <Slider label="Hue Shift" value={currentParams.hueShift || 0} min={0} max={360} step={1} onChange={(v) => updateParam('hueShift', v)} {...getCommonProps('hueShift')} />}
           </div>

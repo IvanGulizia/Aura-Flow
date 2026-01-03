@@ -5,7 +5,7 @@ export const DEFAULT_PARAMS: SimulationParams = {
   strokeWidth: 4, opacity: 1, color: '#574dff', blendMode: 'source-over', lineCap: 'round', glowStrength: 0, blurStrength: 0, seamlessPath: true, pathRounding: 0,
   drawPoints: false,
   smoothModulation: false,
-  disableRoundingOnMod: false,
+  disableRoundingOnMod: true, // UPDATED: Default to true for cleaner modulated strokes
   closePath: false,
   closePathRadius: 50,
   hueShift: 0,
