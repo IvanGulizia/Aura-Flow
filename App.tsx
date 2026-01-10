@@ -532,6 +532,14 @@ export default function App() {
       setActivePresetName(name);
   };
   
+  const restoreDefaultPresets = () => {
+      if (confirm("Reset default presets? \n\nThis will restore the original factory presets. Your custom presets (those with unique names) will be preserved.")) {
+          const defaultNames = new Set(DEFAULT_PRESETS.map(p => p.name));
+          const userPresets = presets.filter(p => !defaultNames.has(p.name));
+          setPresets([...DEFAULT_PRESETS, ...userPresets]);
+      }
+  };
+  
   const exportPresets = () => { 
     try {
         const json = JSON.stringify(presets, null, 2); 
@@ -800,6 +808,7 @@ export default function App() {
             exportPresets={exportPresets}
             exportSinglePreset={exportSinglePreset}
             triggerImportPresets={triggerImportPresets}
+            restoreDefaultPresets={restoreDefaultPresets}
 
             handleSoundUpload={handleSoundUpload}
             handleBufferReady={handleBufferReady}

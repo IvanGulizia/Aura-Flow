@@ -85,6 +85,7 @@ interface SettingsPanelProps {
   exportPresets: () => void;
   exportSinglePreset: () => void;
   triggerImportPresets: () => void;
+  restoreDefaultPresets: () => void;
   
   handleSoundUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleBufferReady: (buffer: AudioBuffer) => void;
@@ -311,6 +312,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             exportSinglePreset={props.exportSinglePreset}
             triggerImportPresets={props.triggerImportPresets}
             saveNewPreset={props.saveNewPreset}
+            restoreDefaultPresets={props.restoreDefaultPresets}
             setShowModifiedOnly={setShowModifiedOnly}
             forceNamingTrigger={forceNamingPreset}
           />

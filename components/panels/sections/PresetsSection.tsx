@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Filter, X, Save, Download, FolderOpen } from 'lucide-react';
+import { Filter, X, Save, Download, FolderOpen, RotateCcw } from 'lucide-react';
 import { SectionHeader } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
@@ -15,13 +15,14 @@ interface PresetsSectionProps extends BaseSectionProps {
   exportSinglePreset: () => void;
   triggerImportPresets: () => void;
   saveNewPreset: (name: string, desc: string) => void;
+  restoreDefaultPresets: () => void;
   setShowModifiedOnly: (val: boolean) => void;
   forceNamingTrigger?: number;
 }
 
 export const PresetsSection: React.FC<PresetsSectionProps> = ({ 
   isOpen, onToggle, presets, activePresetName, loadPreset, deletePreset, 
-  exportPresets, exportSinglePreset, triggerImportPresets, saveNewPreset,
+  exportPresets, exportSinglePreset, triggerImportPresets, saveNewPreset, restoreDefaultPresets,
   showModifiedOnly, setShowModifiedOnly, forceNamingTrigger
 }) => {
   const [isNamingPreset, setIsNamingPreset] = useState(false);
@@ -58,10 +59,11 @@ export const PresetsSection: React.FC<PresetsSectionProps> = ({
             ))}
           </div>
 
-          <div className="flex gap-2 mb-4 border-t border-slate-100 pt-3">
+          <div className="grid grid-cols-2 gap-2 mb-4 border-t border-slate-100 pt-3">
             <PanelButton onClick={exportPresets} label="EXPORT ALL" icon={<Save size={10} />} />
             <PanelButton onClick={exportSinglePreset} label="EXPORT SELECT" icon={<Download size={10} />} title="Export current settings as a single preset file" />
             <PanelButton onClick={triggerImportPresets} label="IMPORT" icon={<FolderOpen size={10} />} />
+            <PanelButton onClick={restoreDefaultPresets} label="RESET PACK" icon={<RotateCcw size={10} />} className="text-amber-600 border-amber-200 hover:bg-amber-50" title="Restore default presets (Keeps your custom presets)" />
           </div>
 
           {isNamingPreset ? (
