@@ -9,7 +9,8 @@ import { Palette } from './components/panels/Palette';
 import { SimulationParams, ModulationConfig, SoundConfig, GlobalForceType, GlobalToolConfig, UITheme, GridConfig, SymmetryConfig, Preset, Connection } from './types';
 import { audioManager } from './services/audioService';
 import { hexToRgba } from './utils/colorUtils';
-import { DEFAULT_PARAMS, DEFAULT_SOUND, DEFAULT_GLOBAL_TOOL, DEFAULT_GRID, DEFAULT_SYMMETRY, DEFAULT_THEME, PARAMS_GROUPS, PARAM_RANGES, DEFAULT_PRESETS, DEFAULT_PALETTE, BLEND_MODES } from './constants/defaults';
+import { DEFAULT_PARAMS, DEFAULT_SOUND, DEFAULT_GLOBAL_TOOL, DEFAULT_GRID, DEFAULT_SYMMETRY, DEFAULT_THEME, PARAMS_GROUPS, PARAM_RANGES, DEFAULT_PALETTE, BLEND_MODES } from './constants/defaults';
+import { DEFAULT_PRESETS } from './constants/presets';
 import { Play, Pause, Mic, MicOff, Trash2, Settings, Undo, Redo, PenTool, MousePointer2, Volume2, VolumeX, Speaker, Loader2, Link as LinkIcon, Shuffle, AlertCircle, RotateCcw } from 'lucide-react';
 
 const FloatingTooltip = ({ text, rect }: { text: string, rect: DOMRect }) => {

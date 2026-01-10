@@ -410,7 +410,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
     if (symmetryConfig.type === 'horizontal') points.push({ x: cx - (x - cx), y: y }); 
     else if (symmetryConfig.type === 'vertical') points.push({ x: x, y: cy - (y - cy) }); 
     else if (symmetryConfig.type === 'quad') { points.push({ x: cx - (x - cx), y: y }); points.push({ x: x, y: cy - (y - cy) }); points.push({ x: cx - (x - cx), y: cy - (y - cy) }); } 
-    else if (symmetryConfig.type === 'radial') { const count = Math.max(2, symmetryConfig.count); const rx = x - cx; const ry = y - cy; const radius = Math.hypot(rx, ry); const angle = Math.atan2(ry, rx); for (let i = 1; i < count; i++) { const theta = angle + (Math.PI * 2 / count) * i; points.push({ x: cx + Math.cos(theta) * radius, y: cy + Math.sin(theta) * radius }); } }
+    else if (symmetryConfig.type === 'radial') { const count = Math.max(2, symmetryConfig.count); const rx = x - cx; const ry = y - cy; const radius = Math.hypot(rx, ry); const angle = Math.atan2(ry, rx); for (let i = 1; i < count; i++) { const theta = angle + (Math.PI * 2 / count) * i; points.push({ x: cx + Math.cos(theta) * 2000, y: cy + Math.sin(theta) * 2000 }); } }
     return points;
   };
   const getClosestPoint = (x: number, y: number, maxDist: number = 30, ignoreStrokeIds: string[] = []): PointReference | null => {
@@ -939,9 +939,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       }
       if (params.opacity > 0 && params.strokeWidth > 0) {
         ctx.lineCap = params.lineCap || 'round'; ctx.lineJoin = 'round'; ctx.globalCompositeOperation = params.blendMode;
-        if (params.blurStrength > 0 && !params.smoothModulation && params.strokeGradientType === 'linear' && !params.modulations?.strokeWidth) { ctx.filter = `blur(${params.blurStrength}px)`; } else { ctx.filter = 'none'; }
+        if (params.blurStrength > 0) { ctx.filter = `blur(${params.blurStrength}px)`; } else { ctx.filter = 'none'; }
         const isModActive = (m?: any) => m && m.source !== 'none';
-        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !isModActive(params.modulations?.strokeWidth) && !isModActive(params.modulations?.opacity) && !isModActive(params.modulations?.hueShift);
+        
+        // UPDATED: Added blurStrength to batch check to force per-segment draw if modulated
+        const canBatchDraw = !params.smoothModulation && params.strokeGradientType === 'linear' && !isModActive(params.modulations?.strokeWidth) && !isModActive(params.modulations?.opacity) && !isModActive(params.modulations?.hueShift) && !isModActive(params.modulations?.blurStrength);
+        
         if (canBatchDraw) {
             const bounds = getStrokeBounds(stroke); const angleRad = (params.strokeGradientAngle || 0) * Math.PI / 180; const r = Math.sqrt(bounds.width**2 + bounds.height**2) / 2;
             const gx1 = bounds.cx - Math.cos(angleRad) * r; const gy1 = bounds.cy - Math.sin(angleRad) * r; const gx2 = bounds.cx + Math.cos(angleRad) * r; const gy2 = bounds.cy + Math.sin(angleRad) * r;
@@ -956,7 +959,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             if (params.glowStrength > 0) { ctx.shadowColor = strokeStyle as string; ctx.shadowBlur = params.glowStrength; }
             ctx.strokeStyle = strokeStyle; ctx.lineWidth = params.strokeWidth; ctx.globalAlpha = params.opacity; ctx.stroke(); ctx.shadowBlur = 0;
             
-            // Draw points if enabled in batch mode
             if (params.drawPoints) {
                 ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : strokeStyle;
                 const ptSize = Math.max(2, params.strokeWidth / 3);
@@ -975,8 +977,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             const len = points.length;
             let roundingRatio = Math.max(0, resolveParam(params.pathRounding, 'pathRounding', stroke, 0.5, pointerRef.current.x, pointerRef.current.y, 0.5, 0));
             
-            // FORCE SHARP IF MODULATION ACTIVE AND OPTION ENABLED
-            const isVisualModActive = isModActive(params.modulations?.strokeWidth) || isModActive(params.modulations?.opacity) || isModActive(params.modulations?.hueShift);
+            const isVisualModActive = isModActive(params.modulations?.strokeWidth) || isModActive(params.modulations?.opacity) || isModActive(params.modulations?.hueShift) || isModActive(params.modulations?.blurStrength);
             if (params.disableRoundingOnMod && isVisualModActive) {
                 roundingRatio = 0;
             }
@@ -998,6 +999,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     
                     const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
                     const opacity = resolveParam(params.opacity, 'opacity', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
+                    
+                    // UPDATED: Resolve blur per segment
+                    const blur = resolveParam(params.blurStrength, 'blurStrength', stroke, p0.pressure, pointerRef.current.x, pointerRef.current.y, progress, i-1);
+                    if (blur > 0) ctx.filter = `blur(${blur}px)`; else ctx.filter = 'none';
+
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;
@@ -1015,7 +1021,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     ctx.lineTo(endX, endY);
                     ctx.stroke();
 
-                    // Correctly Draw Points in modulated mode
                     if (params.drawPoints) {
                         ctx.save();
                         ctx.fillStyle = P.selectedStrokeIds.has(stroke.id) ? '#4f46e5' : c;
@@ -1037,8 +1042,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                             const bx = geom.cx + Math.cos(angle) * geom.radius;
                             const by = geom.cy + Math.sin(angle) * geom.radius;
                             const p1Prog = i / points.length;
+                            
                             const wArc = resolveParam(params.strokeWidth, 'strokeWidth', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i);
                             const oArc = resolveParam(params.opacity, 'opacity', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i);
+                            const bArc = resolveParam(params.blurStrength, 'blurStrength', stroke, p1.pressure, pointerRef.current.x, pointerRef.current.y, p1Prog, i);
+                            if (bArc > 0) ctx.filter = `blur(${bArc}px)`; else ctx.filter = 'none';
+
                             let cArc = params.color;
                             if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) { 
                                 let shift = params.hueShift; 
@@ -1059,6 +1068,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     const pLast = points[lastIdx];
                     const width = resolveParam(params.strokeWidth, 'strokeWidth', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
                     const opacity = resolveParam(params.opacity, 'opacity', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
+                    const blur = resolveParam(params.blurStrength, 'blurStrength', stroke, pLast.pressure, pointerRef.current.x, pointerRef.current.y, 1, lastIdx);
+                    if (blur > 0) ctx.filter = `blur(${blur}px)`; else ctx.filter = 'none';
+
                     let c = params.color;
                     if (params.hueShift !== 0 || (params.audioToColor && P.isMicEnabled)) {
                          let shift = params.hueShift;

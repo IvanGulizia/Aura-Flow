@@ -9,7 +9,7 @@ export const DEFAULT_PARAMS: SimulationParams = {
   closePath: false,
   closePathRadius: 50,
   hueShift: 0,
-  segmentation: 10, smoothing: 0.5,
+  segmentation: 4, smoothing: 0.5,
   mass: 1, friction: 0.9, viscosity: 0.0, elasticity: 0.01, tension: 0, maxDisplacement: 0, gravityX: 0, gravityY: 0,
   wiggleAmplitude: 0, wiggleFrequency: 0, waveSpeed: 0,
   neighborRadius: 150, repulsionForce: 0, attractionForce: 0, alignmentForce: 0, cohesionForce: 0, swarmCursorInfluence: 0,
@@ -132,19 +132,6 @@ export const PARAM_DESCRIPTIONS: Record<string, string> = {
   autoLinkInfluence: "Propagation radius. Affects adjacent points on the stroke.",
   autoLinkFalloff: "Sharpness of the force decay along the propagation radius."
 };
-
-export const DEFAULT_PRESETS: Preset[] = [
-  { name: "Default Pen", description: "Standard digital ink. Responsive to speed and pressure.", params: { ...DEFAULT_PARAMS } },
-  { name: "Sketchy Pencil", description: "Textured, low-opacity strokes that build up like graphite.", params: { ...DEFAULT_PARAMS, opacity: 0.8, seamlessPath: false, strokeWidth: 2, friction: 0.85, modulations: { strokeWidth: { source: 'velocity', scope: 'point', min: 1, max: 4 } } } },
-  { name: "Nervous Energy", description: "High tension and jitter. Lines vibrate with chaotic energy.", params: { ...DEFAULT_PARAMS, tension: 2, wiggleAmplitude: 3, wiggleFrequency: 0.2, opacity: 0.9 } },
-  { name: "Neon City", description: "Glowing, additive strokes. Best on dark backgrounds.", params: { ...DEFAULT_PARAMS, color: '#00ffcc', glowStrength: 15, strokeWidth: 6, blendMode: 'screen', gradient: { enabled: true, colors: ['#00ffcc', '#ff00ff'] }, strokeGradientAngle: 90 } },
-  { name: "Architecture", description: "Clean, straight lines perfect for structural sketches.", params: { ...DEFAULT_PARAMS, strokeWidth: 2, friction: 0.6, segmentation: 20, seamlessPath: false, color: '#334155' } },
-  { name: "Bioluminescence", description: "Organic, floating light. Soft interactions and transparency.", params: { ...DEFAULT_PARAMS, color: '#4ade80', opacity: 0.4, glowStrength: 20, blurStrength: 2, wiggleAmplitude: 2, wiggleFrequency: 0.1, waveSpeed: 0.05, blendMode: 'lighter' } },
-  { name: "Calligraphy", description: "Variable width based on velocity. Elegant and expressive.", params: { ...DEFAULT_PARAMS, strokeWidth: 12, friction: 0.92, modulations: { strokeWidth: { source: 'velocity', scope: 'point', min: 2, max: 12, easing: 'easeOutQuad' } } } },
-  { name: "Chaos Theory", description: "Physics-driven particles that repel the mouse cursor.", params: { ...DEFAULT_PARAMS, tension: 1.5, elasticity: 0.05, friction: 0.99, mouseRepulsion: 3, neighborRadius: 100, repulsionForce: 0.05 } },
-  { name: "Silk Ribbon", description: "Flowing, filled shapes that twist and turn like fabric.", params: { ...DEFAULT_PARAMS, strokeWidth: 20, opacity: 0.6, seamlessPath: true, fill: { enabled: true, colorSource: 'stroke', customColor: '', opacity: 0.2, blur: 0, glow: false, rule: 'nonzero', type: 'solid', syncWithStroke: false, gradient: { enabled: false, colors: ['#000000', '#ffffff'] }, blendMode: 'source-over' }, modulations: { strokeWidth: { source: 'time', scope: 'stroke', min: 5, max: 25, speed: 0.5, easing: 'sine' } } } },
-  { name: "Jellyfish", description: "Underwater physics with floating tentacles and soft gravity.", params: { ...DEFAULT_PARAMS, strokeWidth: 2, gravityY: -0.02, friction: 0.96, wiggleAmplitude: 5, wiggleFrequency: 0.15, waveSpeed: 0.03, fill: { enabled: true, opacity: 0.1, colorSource: 'custom', customColor: '#ffc8dd', blur: 0, glow: false, rule: 'nonzero', type: 'solid', syncWithStroke: false, gradient: { enabled: false, colors: ['#000000', '#ffffff'] }, blendMode: 'source-over' } } },
-];
 
 export const DEFAULT_PALETTE = ['#574dff', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51', '#cdb4db', '#ffc8dd', '#ffafcc', '#bde0fe', '#a2d2ff', '#222222', '#eeeeee'];
 export const BLEND_MODES: BlendMode[] = ['source-over', 'multiply', 'screen', 'overlay', 'lighter', 'difference', 'exclusion'];
