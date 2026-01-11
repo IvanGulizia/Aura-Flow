@@ -1149,7 +1149,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     ctx.strokeStyle = c;
                     ctx.lineWidth = Math.max(0.1, width);
                     ctx.globalAlpha = opacity;
-                    ctx.lineCap = 'round';
+                    // FIX: Use user's lineCap preference even in segmented mode to prevent flicker during motion
+                    ctx.lineCap = params.lineCap || 'round';
                     ctx.beginPath();
                     ctx.moveTo(currentX, currentY);
                     ctx.lineTo(endX, endY);
