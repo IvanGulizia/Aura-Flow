@@ -23,6 +23,7 @@ import { ConnectionSettingsSection } from './sections/ConnectionSettingsSection'
 
 interface SettingsPanelProps {
   theme: UITheme;
+  setTheme: (t: UITheme) => void;
   isOpen: boolean;
   onClose?: () => void;
   
@@ -408,6 +409,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             setSelectionFilter={props.setSelectionFilter}
             ecoMode={props.ecoMode}
             setEcoMode={props.setEcoMode}
+            setTheme={props.setTheme}
           />
           <SidebarSeparator theme={theme} />
       </div>

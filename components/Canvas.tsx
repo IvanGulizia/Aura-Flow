@@ -28,6 +28,7 @@ interface CanvasProps {
   redoTrigger: number;
   resetPosTrigger: number;
   deleteAllLinksTrigger: number;
+  selectAllTrigger: number;
   onStrokeSelect: (strokeIds: string[] | string | null, params: SimulationParams | null, sound: SoundConfig | null, connectionIds: string[] | string | null, connectionParams: Connection | null) => void;
   onCanvasInteraction?: () => void;
   embedFit?: 'cover' | 'contain' | null;
@@ -47,7 +48,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   const { 
     brushParams, brushSound, gridConfig, symmetryConfig, selectedStrokeId, selectedStrokeIds, selectedConnectionIds,
     isPlaying, isSoundEngineEnabled, isMicEnabled, interactionMode, selectionFilter, globalForceTool, globalToolConfig,
-    ecoMode, clearTrigger, deleteSelectedTrigger, undoTrigger, redoTrigger, resetPosTrigger, deleteAllLinksTrigger,
+    ecoMode, clearTrigger, deleteSelectedTrigger, undoTrigger, redoTrigger, resetPosTrigger, deleteAllLinksTrigger, selectAllTrigger,
     onStrokeSelect, onCanvasInteraction, embedFit, embedZoom = 1
   } = props;
 
@@ -400,6 +401,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
   useEffect(() => { if (deleteSelectedTrigger > 0 && (selectedStrokeIds.size > 0 || selectedConnectionIds.size > 0)) { saveToHistory(); strokesRef.current = strokesRef.current.filter(s => !selectedStrokeIds.has(s.id)); connectionsRef.current = connectionsRef.current.filter(c => !selectedConnectionIds.has(c.id)); connectionsRef.current = connectionsRef.current.filter(c => !selectedStrokeIds.has(c.from.strokeId) && !selectedStrokeIds.has(c.to.strokeId)); onStrokeSelect(null, null, null, null, null); needsRedrawRef.current = true; } }, [deleteSelectedTrigger]);
   useEffect(() => { if (deleteAllLinksTrigger > 0) { saveToHistory(); connectionsRef.current = []; needsRedrawRef.current = true; } }, [deleteAllLinksTrigger]);
   useEffect(() => { if (resetPosTrigger > 0) { strokesRef.current.forEach(s => { s.velocity = { x: 0, y: 0 }; s.points.forEach(p => { p.x = p.baseX; p.y = p.baseY; p.vx = 0; p.vy = 0; }); }); needsRedrawRef.current = true; } }, [resetPosTrigger]);
+  
+  // NEW: SELECT ALL TRIGGER LOGIC
+  useEffect(() => {
+      if (selectAllTrigger > 0) {
+          const allStrokeIds = strokesRef.current.map(s => s.id);
+          const allConnIds = connectionsRef.current.map(c => c.id);
+          
+          // Get last items as "primary" for parameter display
+          const primaryStroke = strokesRef.current.length > 0 ? strokesRef.current[strokesRef.current.length - 1] : null;
+          const primaryConn = connectionsRef.current.length > 0 ? connectionsRef.current[connectionsRef.current.length - 1] : null;
+
+          onStrokeSelect(
+              allStrokeIds, 
+              primaryStroke?.params || null, 
+              primaryStroke?.sound || null, 
+              allConnIds, 
+              primaryConn || null
+          );
+          needsRedrawRef.current = true;
+      }
+  }, [selectAllTrigger]);
+
   useEffect(() => { if (undoTrigger > 0 && historyRef.current.length > 0) { const previousState = historyRef.current.pop(); if (previousState) { redoStackRef.current.push({ strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) }); strokesRef.current = previousState.strokes; connectionsRef.current = previousState.connections; const existingStrokeIds = new Set(strokesRef.current.map(s => s.id)); const newStrokeSelection = new Set([...selectedStrokeIds].filter(id => existingStrokeIds.has(id))); const existingConnIds = new Set(connectionsRef.current.map(c => c.id)); const newConnSelection = new Set([...selectedConnectionIds].filter(id => existingConnIds.has(id))); const strokeList = Array.from(newStrokeSelection); const connList = Array.from(newConnSelection); onStrokeSelect(strokeList.length ? strokeList : null, null, null, connList.length ? connList : null, null); needsRedrawRef.current = true; } } }, [undoTrigger]);
   useEffect(() => { if (redoTrigger > 0 && redoStackRef.current.length > 0) { const nextState = redoStackRef.current.pop(); if (nextState) { historyRef.current.push({ strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) }); strokesRef.current = nextState.strokes; connectionsRef.current = nextState.connections; needsRedrawRef.current = true; } } }, [redoTrigger]);
   const getSymmetryPoints = (x: number, y: number): { x: number, y: number }[] => {

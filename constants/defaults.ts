@@ -40,7 +40,7 @@ export const DEFAULT_GRID: GridConfig = { enabled: false, size: 40, snap: true, 
 export const DEFAULT_SYMMETRY: SymmetryConfig = { enabled: false, type: 'horizontal', count: 6, visible: true };
 
 export const DEFAULT_THEME: UITheme = {
-  canvasBg: '#fdfcf8', 
+  canvasBg: '#ffffff', 
 
   menuBg: '#ffffff',
   menuText: '#18284c',

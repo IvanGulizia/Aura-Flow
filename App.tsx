@@ -84,6 +84,7 @@ export default function App() {
   const [resetPosTrigger, setResetPosTrigger] = useState(0);
   const [deleteAllLinksTrigger, setDeleteAllLinksTrigger] = useState(0); 
   const [savePresetTrigger, setSavePresetTrigger] = useState(0); // Trigger for SettingsPanel to open naming UI
+  const [selectAllTrigger, setSelectAllTrigger] = useState(0);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
@@ -213,7 +214,15 @@ export default function App() {
       if (e.key.toLowerCase() === 'h' && !embedMode) { setShowDebug(prev => !prev); }
       
       // --- SHORTCUTS ---
-      if (e.key.toLowerCase() === 'a' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); cyclePreset(-1); }
+      if (e.key.toLowerCase() === 'a') {
+          if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              setSelectAllTrigger(t => t + 1);
+          } else {
+              e.preventDefault(); 
+              cyclePreset(-1); 
+          }
+      }
       if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); cyclePreset(1); }
       if (e.key.toLowerCase() === 'e' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); initiateSave(); }
       if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); pickRandomPreset(); }
@@ -449,7 +458,7 @@ export default function App() {
       strokeIds: string[] | string | null, 
       strokeParams: SimulationParams | null, 
       strokeSound: SoundConfig | null,
-      connectionIds: string[] | string | null,
+      connectionIds: string[] | string | null, 
       connectionParams: Connection | null
   ) => {
     if (embedMode) return;
@@ -686,6 +695,7 @@ export default function App() {
         redoTrigger={redoTrigger}
         resetPosTrigger={resetPosTrigger}
         deleteAllLinksTrigger={deleteAllLinksTrigger}
+        selectAllTrigger={selectAllTrigger}
         onCanvasInteraction={() => setShowPalette(false)}
       />
 
@@ -738,6 +748,7 @@ export default function App() {
 
           <SettingsPanel
             theme={uiTheme}
+            setTheme={setUiTheme}
             isOpen={showSettings}
             onClose={() => setShowSettings(false)}
             

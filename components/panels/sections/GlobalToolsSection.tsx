@@ -1,10 +1,10 @@
 
 import React from 'react';
 import { Network, Eye, EyeOff, Unplug, Globe, MousePointer, LinkIcon, Cpu } from 'lucide-react';
-import { Slider, Toggle, SectionHeader } from '../../ui/Controls';
+import { Slider, Toggle, SectionHeader, ColorInput } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
-import { GlobalForceType, GlobalToolConfig } from '../../../types';
+import { GlobalForceType, GlobalToolConfig, UITheme } from '../../../types';
 
 interface GlobalToolsSectionProps extends BaseSectionProps {
   globalForceTool: GlobalForceType;
@@ -16,11 +16,12 @@ interface GlobalToolsSectionProps extends BaseSectionProps {
   setSelectionFilter: (filter: 'all' | 'links') => void;
   ecoMode: boolean;
   setEcoMode: (val: boolean) => void;
+  setTheme: (t: UITheme) => void;
 }
 
 export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({ 
-  isOpen, onToggle, globalForceTool, setForceTool, globalToolConfig, setGlobalToolConfig, setDeleteAllLinksTrigger,
-  selectionFilter, setSelectionFilter, ecoMode, setEcoMode
+  theme, isOpen, onToggle, globalForceTool, setForceTool, globalToolConfig, setGlobalToolConfig, setDeleteAllLinksTrigger,
+  selectionFilter, setSelectionFilter, ecoMode, setEcoMode, setTheme
 }) => {
   return (
     <>
@@ -73,13 +74,14 @@ export const GlobalToolsSection: React.FC<GlobalToolsSectionProps> = ({
             )}
           </div>
 
-          {/* Eco Mode moved here */}
-          <div className="pt-2 border-t border-slate-200">
+          <div className="pt-2 border-t border-slate-200 space-y-2">
+            <ColorInput label="Background Color" val={theme.canvasBg} onChange={(v) => setTheme({ ...theme, canvasBg: v })} />
+            
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1"><Cpu size={10} /> Eco Mode</span>
               <Toggle label="" value={ecoMode} onChange={setEcoMode} />
             </div>
-            <div className="text-[8px] text-slate-400 italic mt-1 text-right">Pauses rendering when idle to save battery.</div>
+            <div className="text-[8px] text-slate-400 italic text-right">Pauses rendering when idle.</div>
           </div>
         </div>
       )}
