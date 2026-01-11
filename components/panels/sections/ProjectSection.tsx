@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle, Maximize, Minimize, ZoomIn } from 'lucide-react';
-import { SectionHeader, Slider } from '../../ui/Controls';
+import { Save, FolderOpen, Anchor, Share2, ExternalLink, Copy, Check, Code, AlertCircle, Maximize, Minimize, ZoomIn, Palette } from 'lucide-react';
+import { SectionHeader, Slider, ColorInput } from '../../ui/Controls';
 import { PanelButton } from '../../IconButtons';
 import { BaseSectionProps } from './types';
 
@@ -22,8 +22,12 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   const [jsonCopied, setJsonCopied] = useState(false);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
   
+  // Embed Customization State
   const [embedFit, setEmbedFit] = useState<'cover' | 'contain'>('contain');
-  const [embedZoom, setEmbedZoom] = useState<number>(1); // NEW: Local zoom state for generation
+  const [embedZoom, setEmbedZoom] = useState<number>(1);
+  const [embedBorderRadius, setEmbedBorderRadius] = useState<number>(12);
+  const [embedBorderWidth, setEmbedBorderWidth] = useState<number>(1);
+  const [embedBorderColor, setEmbedBorderColor] = useState<string>('#e2e8f0');
 
   const cleanGistUrl = (url: string): string => {
       let clean = url.trim();
@@ -39,9 +43,9 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       return clean;
   };
 
-  const generateEmbedCode = (inputUrl: string, fitMode: 'cover' | 'contain', zoom: number) => {
-      const cleanedUrl = cleanGistUrl(inputUrl);
-      setGistUrl(inputUrl); // Keep user input in field
+  // Centralized Code Generation Effect
+  useEffect(() => {
+      const cleanedUrl = cleanGistUrl(gistUrl);
       
       if (!cleanedUrl) {
           setEmbedCode("");
@@ -53,22 +57,22 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       
       // Create the embed link with fit parameter and zoom
-      let fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}&fit=${fitMode}`;
-      if (zoom !== 1) {
-          fullLink += `&zoom=${zoom}`;
+      let fullLink = `${cleanBase}?mode=embed&url=${encodeURIComponent(cleanedUrl)}&fit=${embedFit}`;
+      if (embedZoom !== 1) {
+          fullLink += `&zoom=${embedZoom}`;
       }
       
       const code = `<iframe 
   src="${fullLink}" 
   width="100%" 
   height="600" 
-  style="border: 1px solid #e2e8f0; border-radius: 12px; background: #fdfcf8; display: block; margin: 0 auto;" 
+  style="border: ${embedBorderWidth}px solid ${embedBorderColor}; border-radius: ${embedBorderRadius}px; background: #fdfcf8; display: block; margin: 0 auto;" 
   allow="microphone; autoplay; clipboard-read; clipboard-write; fullscreen" 
   title="Aura Flow Canvas"
 ></iframe>`;
       
       setEmbedCode(code);
-  };
+  }, [gistUrl, embedFit, embedZoom, embedBorderRadius, embedBorderWidth, embedBorderColor]);
 
   const copyToClipboard = () => {
       if (!embedCode) return;
@@ -82,13 +86,6 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
       setJsonCopied(true);
       setTimeout(() => setJsonCopied(false), 2000);
   };
-
-  // Re-generate code when params change
-  useEffect(() => {
-      if (gistUrl) {
-          generateEmbedCode(gistUrl, embedFit, embedZoom);
-      }
-  }, [embedFit, embedZoom]);
 
   return (
     <>
@@ -133,7 +130,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       <input 
                           type="text" 
                           value={gistUrl}
-                          onChange={(e) => generateEmbedCode(e.target.value, embedFit, embedZoom)}
+                          onChange={(e) => setGistUrl(e.target.value)}
                           placeholder="https://gist.github.com/username/..."
                           className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 text-slate-700 placeholder:text-slate-300"
                       />
@@ -145,7 +142,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       )}
                   </div>
                   
-                  {/* NEW FIT MODE SELECTOR & ZOOM SLIDER */}
+                  {/* VIEW SETTINGS (Fit & Zoom) */}
                   <div className="space-y-2">
                       <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">View Settings</label>
                       <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
@@ -172,6 +169,30 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                               onChange={setEmbedZoom} 
                               className="mb-0" 
                           />
+                      </div>
+                  </div>
+
+                  {/* FRAME STYLE SETTINGS */}
+                  <div className="space-y-2 pt-1 border-t border-slate-100">
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Frame Style</label>
+                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 space-y-2">
+                          <div className="grid grid-cols-2 gap-3">
+                              <Slider 
+                                  label="Border Radius" 
+                                  value={embedBorderRadius} 
+                                  min={0} max={50} step={1} 
+                                  onChange={setEmbedBorderRadius} 
+                                  className="mb-0"
+                              />
+                              <Slider 
+                                  label="Border Width" 
+                                  value={embedBorderWidth} 
+                                  min={0} max={20} step={1} 
+                                  onChange={setEmbedBorderWidth} 
+                                  className="mb-0"
+                              />
+                          </div>
+                          <ColorInput label="Border Color" val={embedBorderColor} onChange={setEmbedBorderColor} />
                       </div>
                   </div>
 

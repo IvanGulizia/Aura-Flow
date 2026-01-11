@@ -74,6 +74,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
       connectionStart: null as PointReference | null
   });
 
+  // State for dragging selected strokes in Pause mode
+  const isDraggingSelectionRef = useRef(false);
+  const dragStartPosRef = useRef<{ x: number, y: number } | null>(null);
+  const dragInitialStateRef = useRef<Map<string, { points: {x: number, y: number, baseX: number, baseY: number}[], center: {x: number, y: number}, originCenter: {x: number, y: number} }>>(new Map());
+
   const selectionBoxRef = useRef({
       active: false,
       startX: 0, startY: 0, currentX: 0, currentY: 0
@@ -146,9 +151,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         if (P.onCanvasInteraction) P.onCanvasInteraction();
         try { (e.target as Element).setPointerCapture(e.pointerId); } catch(err){}
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
-        const { x, y } = snapToGrid(rawX, rawY);
+        const { x, y } = snapToGrid(rawX, rawY); // Used for drawing start
+        
         pointerRef.current = { ...pointerRef.current, isDown: true, x, y, startX: x, startY: y, lastX: x, lastY: y, hasMoved: false };
         needsRedrawRef.current = true;
+        
         if (P.globalForceTool === 'connect') {
             const closest = getClosestPoint(rawX, rawY, 40);
             if (closest) {
@@ -158,8 +165,36 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             return;
         }
         if (P.globalForceTool !== 'none') return;
+        
         if (P.interactionMode === 'select') {
             const hitStroke = P.selectionFilter === 'all' ? getStrokeAtPosition(rawX, rawY) : null;
+            
+            // LOGIC FOR DRAGGING SELECTION IN PAUSE MODE
+            if (!P.isPlaying && hitStroke && P.selectedStrokeIds.has(hitStroke.id)) {
+                // Prepare drag state
+                isDraggingSelectionRef.current = true;
+                
+                // If grid enabled, we snap the start position to ensure consistent stepping
+                const startPos = (P.gridConfig.enabled && P.gridConfig.snap) ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
+                dragStartPosRef.current = startPos;
+                
+                // Snapshot current positions of ALL selected strokes to avoid float drift during drag
+                dragInitialStateRef.current.clear();
+                strokesRef.current.forEach(s => {
+                    if (P.selectedStrokeIds.has(s.id)) {
+                        dragInitialStateRef.current.set(s.id, {
+                            points: s.points.map(p => ({ x: p.x, y: p.y, baseX: p.baseX, baseY: p.baseY })),
+                            center: { ...s.center },
+                            originCenter: { ...s.originCenter }
+                        });
+                    }
+                });
+                
+                // Save history state before drag begins
+                preDrawSnapshotRef.current = { strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) };
+                return; // Stop further processing (don't re-select or start box)
+            }
+
             if (hitStroke) {
                 if (e.shiftKey) {
                     const newSet = new Set(P.selectedStrokeIds);
@@ -170,7 +205,31 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
                     const primaryConn = conns.length > 0 ? connectionsRef.current.find(c => c.id === conns[0]) : null;
                     P.onStrokeSelect(arr, primaryStroke?.params || null, primaryStroke?.sound || null, conns, primaryConn || null);
                 } else {
-                    if (!P.selectedStrokeIds.has(hitStroke.id)) { P.onStrokeSelect(hitStroke.id, hitStroke.params, hitStroke.sound, null, null); }
+                    if (!P.selectedStrokeIds.has(hitStroke.id)) { 
+                        P.onStrokeSelect(hitStroke.id, hitStroke.params, hitStroke.sound, null, null); 
+                        
+                        // If we just selected it and we are paused, immediate drag might be wanted
+                        if (!P.isPlaying) {
+                             isDraggingSelectionRef.current = true;
+                             const startPos = (P.gridConfig.enabled && P.gridConfig.snap) ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
+                             dragStartPosRef.current = startPos;
+                             dragInitialStateRef.current.clear();
+                             // We need to snapshot THIS stroke immediately as it wasn't in the loop above
+                             // But since we just updated selection in React state, we might rely on the ref update?
+                             // Safe bet: snapshot all currently 'hit' stroke + any previous ones if not clearing
+                             const newSelectedIds = new Set([hitStroke.id]); // Single select mode
+                             strokesRef.current.forEach(s => {
+                                 if (newSelectedIds.has(s.id)) {
+                                     dragInitialStateRef.current.set(s.id, {
+                                         points: s.points.map(p => ({ x: p.x, y: p.y, baseX: p.baseX, baseY: p.baseY })),
+                                         center: { ...s.center },
+                                         originCenter: { ...s.originCenter }
+                                     });
+                                 }
+                             });
+                             preDrawSnapshotRef.current = { strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) };
+                        }
+                    }
                 }
             } else {
                 const hitConn = getConnectionAtPosition(rawX, rawY);
@@ -188,6 +247,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
             }
             return;
         }
+        
+        // Drawing logic
         if (P.selectedStrokeId) P.onStrokeSelect(null, null, null, null, null);
         preDrawSnapshotRef.current = { strokes: cloneStrokes(strokesRef.current), connections: JSON.parse(JSON.stringify(connectionsRef.current)) };
         const symPoints = getSymmetryPoints(x, y);
@@ -240,6 +301,36 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         if (!e.cancelable) {} else { e.preventDefault(); }
         const P = latestProps.current;
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
+        
+        // DRAG LOGIC (PAUSE MODE)
+        if (isDraggingSelectionRef.current && dragStartPosRef.current) {
+            const currentPos = (P.gridConfig.enabled && P.gridConfig.snap) ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
+            const dx = currentPos.x - dragStartPosRef.current.x;
+            const dy = currentPos.y - dragStartPosRef.current.y;
+            
+            strokesRef.current.forEach(s => {
+                const initial = dragInitialStateRef.current.get(s.id);
+                if (initial) {
+                    // Update all points
+                    s.points.forEach((p, idx) => {
+                        if (initial.points[idx]) {
+                            p.x = initial.points[idx].x + dx;
+                            p.y = initial.points[idx].y + dy;
+                            p.baseX = initial.points[idx].baseX + dx;
+                            p.baseY = initial.points[idx].baseY + dy;
+                        }
+                    });
+                    // Update centers
+                    s.center.x = initial.center.x + dx;
+                    s.center.y = initial.center.y + dy;
+                    s.originCenter.x = initial.originCenter.x + dx;
+                    s.originCenter.y = initial.originCenter.y + dy;
+                }
+            });
+            needsRedrawRef.current = true;
+            return;
+        }
+
         const { x, y } = (pointerRef.current.isDown && P.interactionMode === 'draw') ? snapToGrid(rawX, rawY) : { x: rawX, y: rawY };
         pointerRef.current.x = x; pointerRef.current.y = y;
         if (selectionBoxRef.current.active) { selectionBoxRef.current.currentX = rawX; selectionBoxRef.current.currentY = rawY; needsRedrawRef.current = true; return; }
@@ -269,6 +360,20 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         const P = latestProps.current;
         try { (e.target as Element).releasePointerCapture(e.pointerId); } catch(err) {}
         pointerRef.current.isDown = false;
+        
+        // FINALIZE DRAG
+        if (isDraggingSelectionRef.current) {
+            isDraggingSelectionRef.current = false;
+            dragStartPosRef.current = null;
+            dragInitialStateRef.current.clear();
+            if (preDrawSnapshotRef.current) {
+                historyRef.current.push(preDrawSnapshotRef.current);
+                if (historyRef.current.length > 30) historyRef.current.shift();
+                redoStackRef.current = [];
+            }
+            return;
+        }
+
         const { x: rawX, y: rawY } = getPointerCoordinates(e);
         if (selectionBoxRef.current.active) {
             const sx = selectionBoxRef.current.startX; const sy = selectionBoxRef.current.startY; const w = selectionBoxRef.current.currentX - sx; const h = selectionBoxRef.current.currentY - sy;
@@ -342,7 +447,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>((props, ref) => {
         activeStrokesRef.current = []; needsRedrawRef.current = true;
     };
     const handlePointerCancel = (e: PointerEvent) => {
-        pointerRef.current.isDown = false; pointerRef.current.connectionStart = null; selectionBoxRef.current.active = false; activeStrokesRef.current = []; needsRedrawRef.current = true;
+        pointerRef.current.isDown = false; 
+        pointerRef.current.connectionStart = null; 
+        selectionBoxRef.current.active = false; 
+        isDraggingSelectionRef.current = false;
+        dragStartPosRef.current = null;
+        activeStrokesRef.current = []; 
+        needsRedrawRef.current = true;
     };
     canvas.addEventListener('pointerdown', handleNativePointerDown, { passive: false });
     canvas.addEventListener('pointermove', handleNativePointerMove, { passive: false });
